@@ -35,6 +35,7 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (r"^(tacacs|radius)(-server)?\b.*\bkey\b", "คีย์ TACACS+/RADIUS"),
     (r"^neighbor\s+\S+\s+password\b", "รหัสผ่าน BGP neighbor"),
     (r"^ip\s+ospf\s+(message-digest-key|authentication-key)\b", "คีย์ยืนยันตัวตน OSPF"),
+    (r"^ntp\s+authentication-key\b", "คีย์ยืนยันตัวตน NTP"),
     (r"^crypto\s+(key|isakmp\s+key|pki)\b", "คีย์เข้ารหัส (crypto key)"),
     (r"^key-string\b", "key-string"),
     (r"^key\s+\d*\s*\S+", "คีย์ (key)"),
@@ -45,6 +46,7 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (r"^snmp-agent\s+(community|usm-user|target-host)\b", "SNMP community/user"),
     (r"^peer\s+\S+\s+password\b", "รหัสผ่าน BGP peer"),
     (r"^(ospf\s+|area-)?authentication-mode\s+(md5|hmac-sha256|simple|keychain)\b", "คีย์ยืนยันตัวตน OSPF"),
+    (r"^rip\s+authentication-mode\s+(md5|hmac-sha256|simple)\b", "คีย์ยืนยันตัวตน RIP"),
     (r"^(hwtacacs|radius)-server\b.*\bshared-key\b", "คีย์ HWTACACS/RADIUS"),
     (r"^ssh\s+user\s", "บัญชีผู้ใช้ SSH"),
     # ---- Generic catch-all (any vendor, any position, including comments)

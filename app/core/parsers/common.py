@@ -77,9 +77,10 @@ def _build_tree(source: Source, ctx: ParseContext) -> list[Block]:
 
 def parse(source: Source, vendor: Vendor, handlers: list[BlockHandler]) -> ParseResult:
     ctx = ParseContext(vendor)
-    blocks: list[BlockResult] = []
+    roots = _build_tree(source, ctx)
+    claimed_by: dict[int, str | None] = {}
 
-    for root in _build_tree(source, ctx):
+    for root in roots:
         claimed = None
         feature = out_of_scope_feature(root.header.body)
         if root.header.indent > 0:
@@ -100,11 +101,25 @@ def parse(source: Source, vendor: Vendor, handlers: list[BlockHandler]) -> Parse
         for line in root.lines():
             if line.no not in ctx.status:
                 ctx.unconverted(line, REASON_NO_RULE, ctx.ir.notes)
-        complete = all(ctx.status[l.no].kind is not LineKind.UNCONVERTED for l in root.lines())
-        blocks.append(BlockResult(root.header.no, root.header.body, claimed, complete))
+        claimed_by[root.header.no] = claimed
+
+    for finalize in ctx.finalizers:
+        finalize(ctx)
+
+    # Completeness is computed after finalizers, which may demote lines of earlier blocks.
+    blocks = [
+        BlockResult(
+            root.header.no,
+            root.header.body,
+            claimed_by[root.header.no],
+            all(ctx.status[l.no].kind is not LineKind.UNCONVERTED for l in root.lines()),
+        )
+        for root in roots
+    ]
 
     ir = ctx.ir
     ir.vlans.sort(key=lambda v: v.vlan_id)
+    ir.notes.sort(key=lambda n: n.source_line)
     if ir.ospf is not None:
         ir.ospf.areas.sort(key=lambda a: a.area_id)
     return ParseResult(ir=ir, line_status=dict(sorted(ctx.status.items())), blocks=blocks)

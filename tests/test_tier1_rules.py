@@ -4,6 +4,7 @@ Covers both directions (Cisco IOS-XE <-> Huawei VRP), per-line provenance labels
 D/T/S categories, warnings, intentionally-unconverted commands and IR-level round-trip.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -565,6 +566,20 @@ class TestFullFileAndLabels:
         assert [(i.line_no, i.command) for i in result.unconverted_items] == [(2, "ipv6 unicast-routing")]
         assert "IPv6" in result.unconverted_items[0].reason
 
+    @pytest.mark.parametrize(
+        "src, expected",
+        [
+            ("interface GigabitEthernet0/0/1\n description uplink-to-vrf-core\n", "description uplink-to-vrf-core"),
+            ("router bgp 65001\n neighbor 10.0.0.2 remote-as 65002\n neighbor 10.0.0.2 description ipv6-ready ISP\n",
+             "peer 10.0.0.2 description ipv6-ready ISP"),
+        ],
+    )
+    def test_free_text_mentioning_out_of_scope_words_is_converted(self, src, expected):
+        """Regression: the free-text exemption regex once held a literal backspace and never matched."""
+        result = c2h(src)
+        assert cmd(result, expected).provenance is Provenance.RULE
+        assert result.unconverted_items == []
+
     def test_unknown_command_never_silently_dropped(self):
         result = c2h("hostname R1\nservice timestamps debug datetime msec\n")
         lines = comments_with(result, "service timestamps debug datetime msec")
@@ -612,7 +627,12 @@ class TestEngineSecurity:
         )
         for secret in secrets:
             assert secret not in everything, secret
-        advisories = [l for l in result.lines if l.provenance is Provenance.SYSTEM]
+        system = [l for l in result.lines if l.provenance is Provenance.SYSTEM]
+        advisories = [l for l in system if l.is_comment]
         assert len(advisories) == result.secret_stripped_count > 0
         target_marker = (H if vendor is C else C).comment_marker
-        assert all(l.is_comment and l.text.startswith(target_marker) for l in advisories)
+        assert all(l.text.startswith(target_marker) for l in advisories)
+        # The only system-generated COMMANDS allowed are the mandatory Huawei companions
+        # (BGP activation block, SSH service switch) — never anything derived from a secret.
+        generated = [l.text.strip() for l in system if not l.is_comment]
+        assert all(re.fullmatch(r"ipv4-family unicast|peer \S+ enable|stelnet server enable", t) for t in generated), generated

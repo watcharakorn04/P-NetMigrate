@@ -21,13 +21,15 @@ OSPFv2, single process (S — block nesting differs):
 from __future__ import annotations
 
 import re
-from ipaddress import IPv4Address, IPv4Network, AddressValueError
+from ipaddress import IPv4Network
 from typing import Optional
 
 from app.core.ir import OspfIR, OspfNetworkIR, StaticRouteIR, SyntaxCategory, Vendor
 from app.core.rules import interface_names
 from app.core.rules.base import (
+    REASON_BAD_VALUE,
     REASON_NO_RULE,
+    REASON_UNKNOWN_IF,
     Block,
     BlockHandler,
     Line,
@@ -35,37 +37,21 @@ from app.core.rules.base import (
     apply_child_rules,
     apply_line_rules,
     compile_rules,
+    parse_ipv4,
+    parse_mask,
     reason_intentional,
     reason_not_supported,
 )
+from app.core.rules.tier2_services import CISCO_REDISTRIBUTE_RULES, HUAWEI_REDISTRIBUTE_RULES
 
 D, T, S = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM, SyntaxCategory.STRUCTURAL
 
-REASON_BAD_VALUE = "ค่าในคำสั่งไม่ถูกต้อง"
-REASON_UNKNOWN_IF = "ไม่รู้จักชื่อ Interface ในคำสั่งนี้"
 REASON_ROUTE_NAME = reason_intentional("ชื่อเส้นทาง (name) จะหายไปโดยไม่มีอะไรเตือน")
 REASON_ROUTE_DESCRIPTION = reason_intentional("คำอธิบายเส้นทาง (description) จะหายไปโดยไม่มีอะไรเตือน")
 REASON_MULTI_PROCESS = reason_not_supported("OSPF หลาย Process (Multi-Process)")
 
 
-def _ip(text: str) -> Optional[IPv4Address]:
-    try:
-        return IPv4Address(text)
-    except (AddressValueError, ValueError):
-        return None
-
-
-def parse_mask(text: str, allow_prefix_len: bool) -> Optional[int]:
-    """Dotted mask (or prefix length if allowed) -> prefix length; None if invalid/non-contiguous."""
-    if allow_prefix_len and text.isdigit():
-        n = int(text)
-        return n if 0 <= n <= 32 else None
-    if _ip(text) is None:
-        return None
-    try:
-        return IPv4Network(f"0.0.0.0/{text}").prefixlen
-    except ValueError:
-        return None
+_ip = parse_ipv4
 
 
 def parse_area(text: str) -> Optional[int]:
@@ -243,7 +229,7 @@ _CISCO_OSPF_RULES = compile_rules(
         (r"^default-information\s+originate$", _default_originate),
         (r"^timers\b", _unsupported("คำสั่งปรับจังหวะเวลา OSPF (Timers)")),
     ]
-)
+) + CISCO_REDISTRIBUTE_RULES
 
 
 def cisco_ospf(block: Block, ctx: ParseContext) -> bool:
@@ -269,7 +255,7 @@ _HUAWEI_OSPF_RULES = compile_rules(
         (r"^(timer|spf-schedule-interval|lsa-arrival-interval|lsa-originate-interval)\b",
          _unsupported("คำสั่งปรับจังหวะเวลา OSPF (Timers)")),
     ]
-)
+) + HUAWEI_REDISTRIBUTE_RULES
 
 
 class _AreaTarget:

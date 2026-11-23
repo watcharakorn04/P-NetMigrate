@@ -104,6 +104,9 @@ class InterfaceIR(BaseModel):
     ospf_cost: Optional[int] = None
     ospf_priority: Optional[int] = None
     ospf_network_p2p: Optional[bool] = None
+    # ACL binding (ip access-group <acl> in|out <-> traffic-filter inbound|outbound acl <acl>)
+    acl_in: Optional["AclRefIR"] = None
+    acl_out: Optional["AclRefIR"] = None
     source_lines: list[int] = Field(default_factory=list)
     field_lines: dict[str, int] = Field(default_factory=dict)  # attribute -> source line
     notes: list[NoteIR] = Field(default_factory=list)
@@ -147,6 +150,17 @@ class OspfAreaIR(BaseModel):
         return str(IPv4Address(self.area_id))
 
 
+class RedistributeIR(BaseModel):
+    """Route import into OSPF / RIP / BGP. Only built when the source states a metric
+    explicitly (default metrics differ between vendors — proposal §2.3.2 items 5 and 7)."""
+
+    protocol: str  # neutral: "static" | "connected" | "ospf" | "rip"
+    process_id: Optional[int] = None  # ospf / rip only (Cisco RIP has no id -> 1)
+    metric: int  # OSPF/RIP: Cisco metric <-> Huawei cost; BGP: Cisco metric <-> Huawei med
+    metric_type: Optional[int] = None  # OSPF external type 1|2 (None = not stated)
+    source_line: Optional[int] = None
+
+
 class OspfIR(BaseModel):
     """Single OSPFv2 process (multi-process is out of scope)."""
 
@@ -155,6 +169,7 @@ class OspfIR(BaseModel):
     areas: list[OspfAreaIR] = Field(default_factory=list)  # kept sorted by area_id
     silent_interfaces: list[InterfaceRef] = Field(default_factory=list)
     default_originate: bool = False
+    redistribute: list[RedistributeIR] = Field(default_factory=list)
     source_lines: list[int] = Field(default_factory=list)
     field_lines: dict[str, int] = Field(default_factory=dict)
     notes: list[NoteIR] = Field(default_factory=list)
@@ -168,10 +183,154 @@ class OspfIR(BaseModel):
         return new
 
 
+class RipIR(BaseModel):
+    """Single RIP process (proposal §2.3.2 item 3: version 2, one process)."""
+
+    process_id: int = 1  # Cisco `router rip` has no id; Huawei `rip` defaults to 1
+    version: Optional[int] = None  # None = not stated (both vendors then run v1 -> warn)
+    auto_summary: Optional[bool] = None  # None = not stated
+    networks: list[IPv4Address] = Field(default_factory=list)  # classful network addresses
+    silent_interfaces: list[InterfaceRef] = Field(default_factory=list)
+    default_originate: bool = False
+    redistribute: list[RedistributeIR] = Field(default_factory=list)
+    source_lines: list[int] = Field(default_factory=list)
+    field_lines: dict[str, int] = Field(default_factory=dict)
+    notes: list[NoteIR] = Field(default_factory=list)
+
+
+class BgpNeighborIR(BaseModel):
+    address: IPv4Address
+    remote_as: int
+    description: Optional[str] = None
+    # Activated for IPv4 unicast. Cisco: implicit unless `no bgp default ipv4-unicast`;
+    # Huawei: only with `peer <ip> enable` (proposal §2.3.2 item 3).
+    enabled: bool = True
+    source_line: Optional[int] = None
+    field_lines: dict[str, int] = Field(default_factory=dict)
+
+
+class BgpNetworkIR(BaseModel):
+    prefix: IPv4Network
+    source_line: Optional[int] = None
+
+
+class BgpIR(BaseModel):
+    """Single-AS IPv4 BGP (peer groups, RR, confederation, filtering, other AFs out)."""
+
+    asn: int
+    router_id: Optional[IPv4Address] = None
+    neighbors: list[BgpNeighborIR] = Field(default_factory=list)
+    networks: list[BgpNetworkIR] = Field(default_factory=list)
+    redistribute: list[RedistributeIR] = Field(default_factory=list)
+    source_lines: list[int] = Field(default_factory=list)
+    field_lines: dict[str, int] = Field(default_factory=dict)
+    notes: list[NoteIR] = Field(default_factory=list)
+
+    def neighbor(self, address: IPv4Address) -> Optional[BgpNeighborIR]:
+        return next((n for n in self.neighbors if n.address == address), None)
+
+
+class AclAddressIR(BaseModel):
+    """Address + wildcard. any = 0.0.0.0/255.255.255.255, host = wildcard 0.0.0.0."""
+
+    address: IPv4Address
+    wildcard: IPv4Address
+
+    @property
+    def is_any(self) -> bool:
+        return int(self.wildcard) == 0xFFFFFFFF
+
+    @property
+    def is_host(self) -> bool:
+        return int(self.wildcard) == 0
+
+
+ACL_ANY = AclAddressIR(address=IPv4Address("0.0.0.0"), wildcard=IPv4Address("255.255.255.255"))
+
+
+class AclPortIR(BaseModel):
+    operator: str  # "eq" | "gt" | "lt" | "range"
+    ports: list[int]  # one port, or [low, high] for range — always numeric in the IR
+
+
+class AclEntryIR(BaseModel):
+    action: str  # "permit" | "deny"
+    protocol: Optional[str] = None  # basic: None; advanced: "ip" | "tcp" | "udp" | "icmp"
+    source: AclAddressIR = ACL_ANY
+    source_port: Optional[AclPortIR] = None
+    destination: Optional[AclAddressIR] = None  # basic: None; advanced: always set
+    destination_port: Optional[AclPortIR] = None
+    # Source rule id / sequence: only orders entries. Output is renumbered (§2.3.2 item 8).
+    sequence: int = 0
+    source_line: Optional[int] = None
+
+    @property
+    def is_catch_all(self) -> bool:
+        return (
+            self.protocol in (None, "ip")
+            and self.source.is_any
+            and (self.destination is None or self.destination.is_any)
+            and self.source_port is None
+            and self.destination_port is None
+        )
+
+
+class AclIR(BaseModel):
+    """IPv4 ACL. Numbered ACLs store a vendor-neutral `ordinal` (offset inside the Huawei
+    range of that kind), never the source number (proposal §2.3.2 item 3)."""
+
+    kind: str  # "basic" (Cisco standard) | "advanced" (Cisco extended)
+    ordinal: Optional[int] = None  # numbered ACL
+    name: Optional[str] = None  # named ACL
+    entries: list[AclEntryIR] = Field(default_factory=list)
+    source_lines: list[int] = Field(default_factory=list)
+    notes: list[NoteIR] = Field(default_factory=list)
+
+    @property
+    def key(self) -> tuple:
+        return ("name", self.name.lower()) if self.name else ("num", self.kind, self.ordinal)
+
+
+class AclRefIR(BaseModel):
+    """Reference to an ACL from an interface binding."""
+
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    ordinal: Optional[int] = None
+
+    @property
+    def key(self) -> tuple:
+        return ("name", self.name.lower()) if self.name else ("num", self.kind, self.ordinal)
+
+
+class ServerIR(BaseModel):
+    """An NTP server or syslog host (IPv4 only)."""
+
+    address: IPv4Address
+    source_line: Optional[int] = None
+
+
+class VtyIR(BaseModel):
+    """Remote-management lines. User accounts / passwords are never part of the IR."""
+
+    first: int
+    last: int
+    transport: Optional[list[str]] = None  # sorted subset of ["ssh", "telnet"]; None = not stated
+    login_local: Optional[bool] = None  # Cisco `login local` <-> Huawei `authentication-mode aaa`
+    source_lines: list[int] = Field(default_factory=list)
+    field_lines: dict[str, int] = Field(default_factory=dict)
+    notes: list[NoteIR] = Field(default_factory=list)
+
+
+InterfaceIR.model_rebuild()
+
 # Fields that record *where* something came from, not *what* the config means.
 # Excluded from round-trip comparison (proposal §2.6.2 item 2: compare at IR level).
+# `sequence` is an ACL rule id: output is renumbered by design (§2.3.2 item 8), list order
+# carries the intent.
 _NON_INTENT_FIELDS = {
     "source_vendor", "source_lines", "source_line", "field_lines", "warnings", "notes", "comments",
+    "sequence",
 }
 
 
@@ -190,13 +349,25 @@ class DeviceConfigIR(BaseModel):
     vlans: list[VlanIR] = Field(default_factory=list)  # kept sorted by vlan_id
     interfaces: list[InterfaceIR] = Field(default_factory=list)
     ospf: Optional[OspfIR] = None
+    rip: Optional[RipIR] = None
+    bgp: Optional[BgpIR] = None
     static_routes: list[StaticRouteIR] = Field(default_factory=list)
+    # Cisco `ip default-gateway` (switch with IP routing off). Huawei has no equivalent
+    # command, so it renders as a static default route with a warning (§2.3.2 item 5).
+    default_gateway: Optional[IPv4Address] = None
+    acls: list[AclIR] = Field(default_factory=list)
+    ntp_servers: list[ServerIR] = Field(default_factory=list)
+    syslog_hosts: list[ServerIR] = Field(default_factory=list)
+    vty_lines: list[VtyIR] = Field(default_factory=list)
     field_lines: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     # Free-text source comments (comment-prefix translation only; not config intent).
     comments: list[NoteIR] = Field(default_factory=list)
     # Top-level source lines/blocks no rule represents; rendered as target comments.
     notes: list[NoteIR] = Field(default_factory=list)
+
+    def acl(self, key: tuple) -> Optional[AclIR]:
+        return next((a for a in self.acls if a.key == key), None)
 
     def intent(self) -> dict:
         """Vendor-neutral configuration intent, for round-trip fidelity checks."""

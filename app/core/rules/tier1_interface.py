@@ -8,8 +8,9 @@
   encapsulation ppp|hdlc        <-> link-protocol ppp|hdlc          (D; renderer warns on HDLC)
   no ip address                  -> "ไม่ต้องใช้คำสั่งนี้" (target default is no address)
 
-The interface block also accepts switchport rules (tier1_vlan) and interface-level OSPF
-rules (tier1_routing). Tunnel/ATM interfaces are out of scope; Clock Rate / Frame Relay are
+The interface block also accepts switchport rules (tier1_vlan), interface-level OSPF
+rules (tier1_routing), RIP authentication (tier2_services, not supported) and ACL binding
+(tier3_bgp_acl). Tunnel/ATM interfaces are out of scope; Clock Rate / Frame Relay are
 "not supported" (§2.3.2 item 3) — all kept as unconverted comments.
 """
 
@@ -40,6 +41,8 @@ from app.core.rules.tier1_routing import (
     parse_mask,
 )
 from app.core.rules.tier1_vlan import CISCO_SWITCHPORT_RULES, HUAWEI_SWITCHPORT_RULES
+from app.core.rules.tier2_services import CISCO_RIP_INTERFACE_RULES, HUAWEI_RIP_INTERFACE_RULES
+from app.core.rules.tier3_bgp_acl import CISCO_ACL_INTERFACE_RULES, HUAWEI_ACL_INTERFACE_RULES
 
 D, T = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM
 
@@ -123,8 +126,14 @@ _HUAWEI_BASE = compile_rules(
     ]
 )
 
-CISCO_INTERFACE_RULES: list[ChildRule] = _CISCO_BASE + CISCO_SWITCHPORT_RULES + CISCO_OSPF_INTERFACE_RULES
-HUAWEI_INTERFACE_RULES: list[ChildRule] = _HUAWEI_BASE + HUAWEI_SWITCHPORT_RULES + HUAWEI_OSPF_INTERFACE_RULES
+CISCO_INTERFACE_RULES: list[ChildRule] = (
+    _CISCO_BASE + CISCO_SWITCHPORT_RULES + CISCO_OSPF_INTERFACE_RULES
+    + CISCO_RIP_INTERFACE_RULES + CISCO_ACL_INTERFACE_RULES
+)
+HUAWEI_INTERFACE_RULES: list[ChildRule] = (
+    _HUAWEI_BASE + HUAWEI_SWITCHPORT_RULES + HUAWEI_OSPF_INTERFACE_RULES
+    + HUAWEI_RIP_INTERFACE_RULES + HUAWEI_ACL_INTERFACE_RULES
+)
 
 
 def _interface(ctx: ParseContext, ref: InterfaceRef, line: Line) -> InterfaceIR:

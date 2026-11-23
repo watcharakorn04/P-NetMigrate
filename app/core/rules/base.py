@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from ipaddress import AddressValueError, IPv4Address, IPv4Network
 from typing import Callable, Optional
 
 from app.core.ir import DeviceConfigIR, NoteIR, Provenance, SyntaxCategory, Vendor
@@ -26,6 +27,8 @@ from app.core.ir import DeviceConfigIR, NoteIR, Provenance, SyntaxCategory, Vend
 
 REASON_NO_RULE = "ยังไม่มีกฎรองรับคำสั่งนี้"
 REASON_ORPHAN = "คำสั่งย่อยที่ไม่มีบล็อกหลักรองรับ"
+REASON_BAD_VALUE = "ค่าในคำสั่งไม่ถูกต้อง"
+REASON_UNKNOWN_IF = "ไม่รู้จักชื่อ Interface ในคำสั่งนี้"
 
 
 def reason_out_of_scope(feature: str) -> str:
@@ -56,7 +59,43 @@ _OUT_OF_SCOPE: list[tuple[re.Pattern[str], str]] = [
 
 
 # Lines whose argument is free text (a description may legitimately say "vrf-core").
-_FREE_TEXT = re.compile(r"^(description|name|hostname|sysname)", re.IGNORECASE)
+_FREE_TEXT = re.compile(
+    r"^((description|name|hostname|sysname)\b|(neighbor|peer)\s+\S+\s+description\b"
+    r"|(access-list\s+\d+\s+)?remark\b)",
+    re.IGNORECASE,
+)
+
+
+def parse_ipv4(text: str) -> Optional[IPv4Address]:
+    try:
+        return IPv4Address(text)
+    except (AddressValueError, ValueError):
+        return None
+
+
+def parse_mask(text: str, allow_prefix_len: bool) -> Optional[int]:
+    """Dotted mask (or prefix length if allowed) -> prefix length; None if invalid/non-contiguous."""
+    if allow_prefix_len and text.isdigit():
+        n = int(text)
+        return n if 0 <= n <= 32 else None
+    if parse_ipv4(text) is None:
+        return None
+    try:
+        return IPv4Network(f"0.0.0.0/{text}").prefixlen
+    except ValueError:
+        return None
+
+
+def classful_prefix_len(address: IPv4Address) -> Optional[int]:
+    """Class A/B/C natural mask length; None for class D/E (not a unicast network)."""
+    first = int(address) >> 24
+    if first < 128:
+        return 8
+    if first < 192:
+        return 16
+    if first < 224:
+        return 24
+    return None
 
 
 def out_of_scope_feature(body: str) -> Optional[str]:
@@ -133,6 +172,22 @@ class ParseContext:
         self.ir = DeviceConfigIR(source_vendor=vendor)
         self.status: dict[int, LineStatus] = {}
         self.current_rule: Optional[str] = None
+        # Scratch state shared by one rule module across blocks (e.g. ACL entries spread over
+        # many top-level `access-list` lines). Never part of the IR.
+        self.data: dict[str, object] = {}
+        # Run once after every block is parsed, before block completeness is computed. Used
+        # when a decision needs the whole file (e.g. unconvert an ACL if any entry failed).
+        self.finalizers: list[Callable[["ParseContext"], None]] = []
+
+    def add_finalizer(self, fn: Callable[["ParseContext"], None]) -> None:
+        if fn not in self.finalizers:
+            self.finalizers.append(fn)
+
+    def demote(self, line_no: int, reason: str, notes: list[NoteIR]) -> None:
+        """Re-label an already-converted line as UNCONVERTED (finalizers only)."""
+        status = self.status[line_no]
+        self.status[line_no] = LineStatus(LineKind.UNCONVERTED, status.body, reason=reason, rule=status.rule)
+        notes.append(NoteIR(source_line=line_no, text=status.body, provenance=Provenance.UNCONVERTED, reason=reason))
 
     # -- marking
     def rule(self, line: Line, category: SyntaxCategory) -> None:
@@ -164,6 +219,30 @@ ChildRule = tuple[re.Pattern[str], Callable[..., None]]
 
 def compile_rules(rules: list[tuple[str, Callable[..., None]]]) -> list[ChildRule]:
     return [(re.compile(p, re.IGNORECASE), fn) for p, fn in rules]
+
+
+def unsupported_rule(feature: str) -> Callable[..., None]:
+    """Child-rule fn: mark the line "แปลงไม่ได้" as a "not supported" feature (§2.3.2 item 3)."""
+    reason = reason_not_supported(feature)
+
+    def fn(m, line, ctx, target):
+        ctx.unconverted(line, reason, target.notes)
+
+    return fn
+
+
+def unconverted_rule(reason: str) -> Callable[..., None]:
+    def fn(m, line, ctx, target):
+        ctx.unconverted(line, reason, target.notes)
+
+    return fn
+
+
+def not_needed_rule(reason: str) -> Callable[..., None]:
+    def fn(m, line, ctx, target):
+        ctx.not_needed(line, reason, target.notes)
+
+    return fn
 
 
 def apply_line_rules(

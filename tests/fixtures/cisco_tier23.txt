@@ -1,0 +1,54 @@
+! Tier-2 / Tier-3 in-scope sample (no secrets)
+hostname R1-BORDER
+!
+ip access-list extended WEB-IN
+ permit tcp any host 192.168.10.10 eq www
+ permit tcp any host 192.168.10.10 range 8000 8080
+ deny ip any any
+!
+access-list 10 permit 192.168.10.0 0.0.0.255
+access-list 10 deny any
+access-list 101 permit udp host 10.1.1.1 any eq 53
+access-list 101 permit icmp any any
+access-list 101 deny tcp 10.2.0.0 0.0.255.255 gt 1023 any lt 1024
+!
+interface GigabitEthernet0/0/0
+ ip address 10.0.0.1 255.255.255.252
+ ip access-group 101 in
+ ip access-group WEB-IN out
+!
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+!
+router ospf 1
+ router-id 1.1.1.1
+ network 10.0.0.0 0.0.0.3 area 0
+ redistribute static subnets metric 20 metric-type 1
+ redistribute rip subnets metric 30
+!
+router rip
+ version 2
+ no auto-summary
+ passive-interface Loopback0
+ network 172.16.0.0
+ default-information originate
+ redistribute connected metric 2
+ redistribute ospf 1 metric 5
+!
+router bgp 65001
+ bgp router-id 1.1.1.1
+ neighbor 10.0.0.2 remote-as 65002
+ neighbor 10.0.0.2 description ISP-A
+ neighbor 1.1.1.2 remote-as 65001
+ network 192.168.10.0 mask 255.255.255.0
+ redistribute static metric 100
+!
+ntp server 10.9.9.1
+logging host 10.9.9.2
+logging 10.9.9.3
+!
+line vty 0 4
+ login local
+ transport input ssh
+!
+end

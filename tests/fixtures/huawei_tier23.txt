@@ -1,0 +1,53 @@
+!Software Version V200R010C00
+#
+sysname R2-BORDER
+#
+acl number 2000
+ rule 5 permit source 192.168.20.0 0.0.0.255
+#
+acl number 3100
+ rule 5 permit tcp destination 10.0.0.1 0 destination-port eq 22
+ rule 10 deny ip
+#
+acl name MGMT basic
+ rule 5 permit source 10.10.10.10 0
+#
+interface GigabitEthernet0/0/0
+ ip address 10.0.0.2 255.255.255.252
+ traffic-filter inbound acl 3100
+ traffic-filter outbound acl name MGMT
+#
+interface LoopBack0
+ ip address 2.2.2.2 255.255.255.255
+#
+ospf 1 router-id 2.2.2.2
+ import-route direct cost 10
+ area 0.0.0.0
+  network 10.0.0.0 0.0.0.3
+#
+rip 1
+ version 2
+ undo summary
+ silent-interface LoopBack0
+ network 172.16.0.0
+ import-route static cost 3
+#
+bgp 65002
+ router-id 2.2.2.2
+ peer 10.0.0.1 as-number 65001
+ #
+ ipv4-family unicast
+  undo synchronization
+  network 192.168.20.0 255.255.255.0
+  import-route direct med 50
+  peer 10.0.0.1 enable
+#
+ntp-service unicast-server 10.9.9.1
+info-center loghost 10.9.9.2
+#
+stelnet server enable
+user-interface vty 0 4
+ authentication-mode aaa
+ protocol inbound ssh
+#
+return
