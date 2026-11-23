@@ -109,6 +109,7 @@
         </label>
         <button id="copy-btn" type="button" disabled class="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">{{ t('copy') }}</button>
         <button id="download-btn" type="button" disabled class="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">{{ t('download_txt') }}</button>
+        <a id="history-link" href="#" class="hidden rounded-md border border-teal-600 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-500/10">{{ t('open_history_record') }}</a>
       </div>
     </div>
 
@@ -146,5 +147,5 @@
 
 {% block scripts %}
 <script>window.NM_AI_AVAILABLE = {{ ai_available|tojson }};</script>
-<script src="/static/js/convert.js"></script>
+<script src="/static/js/convert.js?v={{ asset_v }}"></script>
 {% endblock %}

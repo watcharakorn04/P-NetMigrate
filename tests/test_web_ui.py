@@ -83,7 +83,7 @@ class TestPages:
         assert '<html lang="th">' in html
         assert "แปลงคำสั่งแบบไฟล์เดี่ยว" in html
         assert "ตรวจสอบก่อนแปลง" in html
-        assert html.count(">เร็วๆ นี้</span>") == 6  # modules 2–5, 7, 8
+        assert "เร็วๆ นี้" not in html  # all 8 modules are live
         assert resp.cookies.get("lang") == "th"
 
     def test_english_page(self, client):
@@ -93,7 +93,7 @@ class TestPages:
         assert '<html lang="en">' in html
         assert "Single File / CLI Conversion" in html
         assert "Run Pre-scan" in html and "Send Selected to AI" in html
-        assert html.count(">Coming Soon</span>") == 6
+        assert "Coming Soon" not in html
         assert "แปลงคำสั่งแบบไฟล์เดี่ยว" not in html
         assert resp.cookies.get("lang") == "en"
 
@@ -122,7 +122,7 @@ class TestPages:
         assert 'id="theme-toggle"' in html and "localStorage" in html
         assert 'href="?lang=th"' in html and 'href="?lang=en"' in html
         assert 'id="health-badge"' in html
-        assert "/static/js/app.js" in html and "/static/js/convert.js" in html
+        assert "/static/js/app.js?v=" in html and "/static/js/convert.js?v=" in html
 
     def test_ai_modes_disabled_without_key(self, client):
         no_key()

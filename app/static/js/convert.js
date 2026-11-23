@@ -55,36 +55,52 @@
   });
   direction.addEventListener("change", saveDraft);
 
+  // Single entry point for loading text into the editor (file upload, samples, clear).
+  // It updates the JS state AND dispatches a real "input" event, so every listener
+  // (line count, draft, and the Pre-scan / Convert source check) sees the new text.
+  function setSource(text, name, file) {
+    editor.value = text || "";
+    editor.dispatchEvent(new Event("input", { bubbles: true }));  // resets currentFile
+    currentFile = file || null;
+    $("file-name").textContent = name || "";
+    $("error").textContent = "";
+  }
+
   fileInput.addEventListener("change", function () {
     var f = fileInput.files && fileInput.files[0];
     if (!f) return;
-    currentFile = f;
-    $("file-name").textContent = f.name;
     var reader = new FileReader();
-    reader.onload = function () { editor.value = String(reader.result || ""); updateCount(); saveDraft(); };
+    reader.onload = function () { setSource(String(reader.result || ""), f.name, f); };
     reader.readAsText(f);
     fileInput.value = "";
   });
 
+  // A sample loads asynchronously. Pre-scan / Convert clicked while it is still in flight
+  // must wait for it — otherwise they see an empty editor ("please paste commands first")
+  // and the text appears right after, which looked like the buttons ignored the sample.
+  var pendingSource = null;
+  function whenSourceReady(fn) {
+    if (pendingSource) pendingSource.then(fn, fn);
+    else fn();
+  }
+
   document.querySelectorAll("[data-sample]").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var vendor = btn.getAttribute("data-sample");
-      fetch("/static/samples/" + vendor + "_sample.txt", { cache: "no-store" })
-        .then(function (r) { return r.text(); })
+      var load = pendingSource = fetch("/static/samples/" + vendor + "_sample.txt", { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error(T.request_failed + " (" + r.status + ")"); return r.text(); })
         .then(function (text) {
-          editor.value = text;
-          currentFile = null;
-          $("file-name").textContent = vendor + "_sample.txt";
           direction.value = vendor === "cisco" ? "c2h" : "h2c";
-          updateCount();
-          saveDraft();
-        });
+          setSource(text, vendor + "_sample.txt", null);
+        })
+        .catch(function (err) { $("error").textContent = err.message || T.request_failed; })
+        .finally(function () { if (pendingSource === load) pendingSource = null; });
     });
   });
 
-  $("clear-btn").addEventListener("click", function () {
-    editor.value = ""; currentFile = null; $("file-name").textContent = ""; updateCount(); saveDraft();
-  });
+  $("clear-btn").addEventListener("click", function () { setSource("", "", null); });
+
+  function sourceText() { return editor.value; }  // always read the live editor value
 
   function selectedMode() {
     var r = document.querySelector('input[name="mode"]:checked');
@@ -103,12 +119,13 @@
   }
 
   function formData() {
-    if (!editor.value.trim() && !currentFile) { $("error").textContent = T.empty_input; return null; }
+    var text = sourceText();
+    if (!text.trim() && !currentFile) { $("error").textContent = T.empty_input; return null; }
     var fd = new FormData();
     fd.append("direction", direction.value);
     fd.append("lang", LANG);
     if (currentFile) fd.append("file", currentFile, currentFile.name);
-    else fd.append("config", editor.value);
+    else fd.append("config", text);
     return fd;
   }
 
@@ -153,8 +170,10 @@
   }
 
   $("prescan-btn").addEventListener("click", function () {
-    var fd = formData();
-    if (fd) post("/api/prescan", fd).then(renderPrescan).catch(function () {});
+    whenSourceReady(function () {
+      var fd = formData();
+      if (fd) post("/api/prescan", fd).then(renderPrescan).catch(function () {});
+    });
   });
 
   // ---------------------------------------------------------------- result
@@ -265,11 +284,13 @@
   }
 
   $("convert-btn").addEventListener("click", function () {
-    var fd = formData();
-    if (!fd) return;
-    fd.append("mode", selectedMode());
-    var snapshot = { direction: direction.value, text: editor.value };
-    post("/api/convert", fd).then(function (r) { lastRequest = snapshot; renderResult(r); }).catch(function () {});
+    whenSourceReady(function () {
+      var fd = formData();
+      if (!fd) return;
+      fd.append("mode", selectedMode());
+      var snapshot = { direction: direction.value, text: sourceText() };
+      post("/api/convert", fd).then(function (r) { lastRequest = snapshot; renderResult(r); renderHistoryLink(r); }).catch(function () {});
+    });
   });
 
   $("select-all").addEventListener("change", function (e) {
@@ -317,6 +338,14 @@
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
   });
+
+  // Each conversion is saved to the audit history (module 5) — link to its record.
+  function renderHistoryLink(r) {
+    var a = $("history-link");
+    if (!a) return;
+    if (r.history_id) { a.href = "/history/" + r.history_id; a.classList.remove("hidden"); }
+    else a.classList.add("hidden");
+  }
 
   restoreDraft();
   updateCount();

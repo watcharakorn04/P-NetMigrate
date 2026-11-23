@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}{{ t('dep_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl space-y-6" id="deploy-root" data-preselect="{{ preselect or '' }}">
+  <div>
+    <h1 class="nm-h1">{{ t('dep_title') }}</h1>
+    <p class="nm-sub">{{ t('dep_subtitle') }}</p>
+  </div>
+
+  <div class="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
+    🛡 {{ t('dep_guard_note') }}
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-5">
+    <section class="space-y-4 xl:col-span-3">
+      <!-- 1. source -->
+      <div class="nm-card">
+        <h2 class="text-sm font-semibold">1 · {{ t('dep_step_source') }}</h2>
+        <div class="mt-3 flex gap-4 text-sm">
+          <label class="inline-flex items-center gap-1.5"><input type="radio" name="dep-src" value="history" checked class="text-teal-600"> {{ t('dep_src_history') }}</label>
+          <label class="inline-flex items-center gap-1.5"><input type="radio" name="dep-src" value="text" class="text-teal-600"> {{ t('dep_src_text') }}</label>
+        </div>
+        <div id="dep-src-history" class="mt-3">
+          <select id="dep-conversion" class="nm-input"><option value="">{{ t('dep_pick_conversion') }}</option></select>
+        </div>
+        <div id="dep-src-text" class="mt-3 hidden space-y-2">
+          <select id="dep-vendor" class="nm-input"><option value="huawei_vrp">Huawei VRP</option><option value="cisco_ios_xe">Cisco IOS-XE</option></select>
+          <textarea id="dep-text" rows="8" spellcheck="false" class="nm-input nm-scroll font-mono text-[13px]" placeholder="{{ t('editor_placeholder') }}"></textarea>
+        </div>
+        <div class="mt-3"><button id="dep-plan" type="button" class="nm-btn-primary">{{ t('dep_build_plan') }}</button></div>
+      </div>
+
+      <!-- 2. review -->
+      <div class="nm-card hidden" id="dep-review">
+        <h2 class="text-sm font-semibold">2 · {{ t('dep_step_review') }}</h2>
+        <p class="text-xs text-slate-500 dark:text-slate-400">{{ t('dep_edit_hint') }}</p>
+        <textarea id="dep-commands" rows="14" spellcheck="false" class="nm-input nm-scroll mt-2 font-mono text-[13px]"></textarea>
+        <div class="mt-1 text-xs text-slate-500 dark:text-slate-400"><span id="dep-cmd-count">0</span> {{ t('dep_commands') }}</div>
+        <details class="mt-3 rounded-md border border-slate-200 p-3 dark:border-slate-800" open>
+          <summary class="cursor-pointer text-sm font-medium">{{ t('dep_removed') }} (<span id="dep-removed-count">0</span>)</summary>
+          <ul id="dep-removed" class="nm-scroll mt-2 max-h-56 space-y-1 overflow-y-auto text-xs"></ul>
+        </details>
+        <label id="dep-ack-wrap" class="mt-3 hidden items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          <input id="dep-ack" type="checkbox" class="mt-0.5 rounded border-amber-400 text-amber-600">
+          <span>{{ t('dep_ack_ai') }} (<span id="dep-ai-count">0</span>)</span>
+        </label>
+      </div>
+
+      <!-- 3. target -->
+      <div class="nm-card hidden" id="dep-target">
+        <h2 class="text-sm font-semibold">3 · {{ t('dep_step_target') }}</h2>
+        <div class="mt-3 grid gap-2 sm:grid-cols-2">
+          <label class="flex cursor-pointer rounded-lg border p-3 text-sm has-[:checked]:border-teal-500 has-[:checked]:bg-teal-50 dark:border-slate-700 dark:has-[:checked]:bg-teal-500/10">
+            <input type="radio" name="dep-mode" value="simulation" checked class="sr-only">
+            <span><span class="block font-semibold">{{ t('dep_mode_sim') }} <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800">{{ t('mode_default') }}</span></span>
+            <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">{{ t('dep_mode_sim_desc') }}</span></span>
+          </label>
+          <label class="flex cursor-pointer rounded-lg border p-3 text-sm has-[:checked]:border-rose-500 has-[:checked]:bg-rose-50 dark:border-slate-700 dark:has-[:checked]:bg-rose-500/10">
+            <input type="radio" name="dep-mode" value="live" class="sr-only">
+            <span><span class="block font-semibold">{{ t('dep_mode_live') }}</span>
+            <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">{{ t('dep_mode_live_desc') }}</span></span>
+          </label>
+        </div>
+        <label class="mt-3 block"><span class="nm-label">{{ t('dep_device') }}</span>
+          <select id="dep-device" class="nm-input"><option value="">{{ t('dep_device_none') }}</option></select></label>
+        <div id="dep-live" class="mt-3 hidden space-y-3 rounded-md border border-rose-200 p-3 dark:border-rose-900/60">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label><span class="nm-label">{{ t('dep_username') }}</span><input id="dep-user" autocomplete="off" class="nm-input"></label>
+            <label><span class="nm-label">{{ t('dep_password') }}</span><input id="dep-pass" type="password" autocomplete="new-password" class="nm-input"></label>
+          </div>
+          <p class="text-xs text-slate-500 dark:text-slate-400">{{ t('dep_cred_note') }}</p>
+          <label class="flex items-start gap-2 text-sm"><input id="dep-lab" type="checkbox" class="mt-0.5 rounded text-rose-600"> {{ t('dep_lab_confirm') }}</label>
+        </div>
+        <p id="dep-error" role="alert" class="mt-3 text-sm font-medium text-rose-600 dark:text-rose-400"></p>
+        <div class="mt-3"><button id="dep-run" type="button" class="nm-btn-primary">{{ t('dep_review_send') }}</button></div>
+      </div>
+    </section>
+
+    <!-- live log -->
+    <section class="nm-card flex flex-col p-0 xl:col-span-2">
+      <div class="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+        <h2 class="text-sm font-semibold">{{ t('dep_log') }}</h2>
+        <span id="dep-status"></span>
+        <a id="dep-log-dl" href="#" class="nm-btn ml-auto hidden px-2 py-1 text-xs">{{ t('download') }}</a>
+      </div>
+      <div class="flex flex-wrap gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+        <input id="dep-log-q" type="search" class="nm-input w-40 py-1 text-xs" placeholder="{{ t('search') }}">
+        {% for lv in ['INFO', 'SUCCESS', 'WARNING', 'ERROR', 'COMMAND'] %}
+        <label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" data-level="{{ lv }}" checked class="rounded border-slate-300 text-teal-600 dark:border-slate-600 dark:bg-slate-800"> {{ lv }}</label>
+        {% endfor %}
+      </div>
+      <div id="dep-log" class="nm-scroll min-h-[18rem] flex-1 overflow-y-auto bg-slate-950 p-3 font-mono text-[12px] leading-5 text-slate-200 xl:max-h-[36rem]">
+        <div class="text-slate-500">{{ t('dep_log_empty') }}</div>
+      </div>
+    </section>
+  </div>
+
+  <section class="nm-card p-0">
+    <h2 class="border-b border-slate-200 px-4 py-3 text-sm font-semibold dark:border-slate-800">{{ t('dep_history') }}</h2>
+    <div class="overflow-x-auto"><table class="min-w-full text-sm">
+      <thead class="border-b border-slate-200 dark:border-slate-800"><tr>
+        <th class="nm-th">#</th><th class="nm-th">{{ t('date') }}</th><th class="nm-th">{{ t('dep_device') }}</th>
+        <th class="nm-th">{{ t('mode') }}</th><th class="nm-th">{{ t('status') }}</th><th class="nm-th">{{ t('dep_commands') }}</th><th class="nm-th"></th></tr></thead>
+      <tbody id="dep-history" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+    </table></div>
+  </section>
+
+  <!-- 4.4 confirmation -->
+  <dialog id="dep-confirm" class="w-full max-w-2xl rounded-xl border border-slate-200 p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+    <div class="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+      <h3 class="font-semibold">{{ t('dep_confirm_title') }}</h3>
+      <p id="dep-confirm-sub" class="mt-1 text-sm text-slate-500 dark:text-slate-400"></p>
+    </div>
+    <pre id="dep-confirm-list" class="nm-scroll max-h-[50vh] overflow-auto bg-slate-50 px-5 py-3 font-mono text-[12.5px] dark:bg-slate-950"></pre>
+    <div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-800">
+      <button id="dep-confirm-cancel" type="button" class="nm-btn">{{ t('cancel') }}</button>
+      <button id="dep-confirm-ok" type="button" class="nm-btn-primary">{{ t('dep_confirm_send') }}</button>
+    </div>
+  </dialog>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/deploy.js?v={{ asset_v }}"></script>
+{% endblock %}

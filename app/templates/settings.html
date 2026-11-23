@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ t('set_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl space-y-6">
+  <div>
+    <h1 class="nm-h1">{{ t('set_title') }}</h1>
+    <p class="nm-sub">{{ t('set_subtitle') }}</p>
+  </div>
+
+  <div class="grid gap-6 lg:grid-cols-2">
+    <section class="nm-card">
+      <h2 class="text-sm font-semibold">{{ t('set_llm') }}</h2>
+      <dl class="mt-3 divide-y divide-slate-100 text-sm dark:divide-slate-800">
+        <div class="flex gap-3 py-2"><dt class="w-40 shrink-0 text-slate-500 dark:text-slate-400">{{ t('set_key_status') }}</dt>
+          <dd>{% if llm.configured %}<span class="nm-chip bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-500/15 dark:text-emerald-300">{{ t('set_key_set') }}</span>
+              <code id="masked-key" class="ml-2 font-mono text-xs">{{ llm.masked_key }}</code>
+              {% else %}<span class="nm-chip bg-amber-100 text-amber-900 ring-amber-600/30 dark:bg-amber-500/15 dark:text-amber-300">{{ t('set_key_missing') }}</span>{% endif %}</dd></div>
+        <div class="flex gap-3 py-2"><dt class="w-40 shrink-0 text-slate-500 dark:text-slate-400">{{ t('set_model') }}</dt><dd class="font-mono text-xs">{{ llm.model }}</dd></div>
+        <div class="flex gap-3 py-2"><dt class="w-40 shrink-0 text-slate-500 dark:text-slate-400">{{ t('set_base_url') }}</dt><dd class="break-all font-mono text-xs">{{ llm.base_url }}</dd></div>
+        <div class="flex gap-3 py-2"><dt class="w-40 shrink-0 text-slate-500 dark:text-slate-400">{{ t('set_timeout') }}</dt><dd class="tabular-nums">{{ llm.timeout }} s</dd></div>
+        <div class="flex gap-3 py-2"><dt class="w-40 shrink-0 text-slate-500 dark:text-slate-400">{{ t('set_complex') }}</dt>
+          <dd class="font-mono text-xs">{{ llm.complex|join(', ') if llm.complex else t('none') }}</dd></div>
+        <div class="flex gap-3 py-2"><dt class="w-40 shrink-0 text-slate-500 dark:text-slate-400">{{ t('set_modes') }}</dt>
+          <dd class="flex flex-wrap gap-1">{% for m in modes %}<span class="nm-chip {{ 'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-500/15 dark:text-emerald-300' if mode_availability[m] else 'bg-slate-200 text-slate-500 ring-slate-500/20 dark:bg-slate-700/60 dark:text-slate-400' }}">{{ t('mode_' ~ m) }}</span>{% endfor %}</dd></div>
+      </dl>
+      <p class="mt-3 rounded-md bg-slate-50 p-2 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">{{ t('set_env_hint') }}</p>
+    </section>
+
+    <section class="nm-card">
+      <div class="flex items-center gap-2">
+        <h2 class="text-sm font-semibold">{{ t('set_health') }}</h2>
+        <span id="set-health-state"></span>
+        <button id="set-health-refresh" type="button" class="nm-btn ml-auto px-2 py-1 text-xs">{{ t('refresh') }}</button>
+        <a href="/api/health" target="_blank" rel="noopener" class="nm-btn px-2 py-1 text-xs">/api/health ↗</a>
+      </div>
+      <pre id="set-health-json" class="nm-scroll mt-3 max-h-64 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-[12px] text-slate-200">…</pre>
+      <p class="mt-1 text-xs text-slate-400"><span>{{ t('set_latency') }}:</span> <span id="set-health-ms">—</span></p>
+      <h3 class="mt-4 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{{ t('set_storage') }}</h3>
+      <dl class="mt-2 grid grid-cols-3 gap-2 text-sm">
+        <div class="nm-stat"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('dash_conversions') }}</dt><dd class="font-semibold tabular-nums">{{ db_info.counts.conversions }}</dd></div>
+        <div class="nm-stat"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('nav_m3') }}</dt><dd class="font-semibold tabular-nums">{{ db_info.counts.devices }}</dd></div>
+        <div class="nm-stat"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('dep_history') }}</dt><dd class="font-semibold tabular-nums">{{ db_info.counts.deployments }}</dd></div>
+      </dl>
+      <p class="mt-2 break-all font-mono text-xs text-slate-400">SQLite: {{ db_info.path }} · v{{ version }}</p>
+    </section>
+  </div>
+
+  <section class="nm-card p-0">
+    <div class="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+      <h2 class="text-sm font-semibold">{{ t('set_coverage') }}</h2>
+      <p class="text-xs text-slate-500 dark:text-slate-400">{{ t('set_coverage_hint') }}</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="border-b border-slate-200 dark:border-slate-800"><tr>
+          <th class="nm-th">{{ t('set_tier') }}</th><th class="nm-th">{{ t('set_group') }}</th>
+          <th class="nm-th">{{ t('dir_c2h') }}</th><th class="nm-th">{{ t('dir_h2c') }}</th><th class="nm-th">{{ t('set_not_supported') }}</th></tr></thead>
+        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+          {% for row in coverage %}
+          <tr data-coverage-row="{{ row.key }}">
+            <td class="nm-td"><span class="nm-chip bg-slate-100 text-slate-700 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-300">Tier {{ row.tier }}</span></td>
+            <td class="nm-td font-medium">{{ t(row.key) }}</td>
+            {% for v in [row.c2h, row.h2c] %}
+            <td class="nm-td tabular-nums"><span class="{{ 'text-emerald-600 dark:text-emerald-400' if v >= 99.9 else 'text-amber-600 dark:text-amber-400' }} font-semibold">{{ '%g'|format(v) }}%</span></td>
+            {% endfor %}
+            <td class="nm-td text-xs text-slate-500 dark:text-slate-400">{{ row.unsupported or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="nm-card">
+    <h2 class="text-sm font-semibold">{{ t('set_ui') }}</h2>
+    <div class="mt-3 flex flex-wrap gap-6 text-sm">
+      <div><span class="nm-label">{{ t('theme_toggle') }}</span><button type="button" class="nm-btn" onclick="document.getElementById('theme-toggle').click()">☀ / ☾</button></div>
+      <div><span class="nm-label">{{ t('lang_toggle') }}</span>
+        <a class="nm-btn" href="?lang=th" data-lang-link="th">ไทย</a> <a class="nm-btn" href="?lang=en" data-lang-link="en">English</a></div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var NM = window.NM, T = NM.T;
+  function check() {
+    var t0 = performance.now();
+    fetch("/api/health?lang=" + (window.NM_LANG || "th"), { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (h) {
+        document.getElementById("set-health-ms").textContent = Math.round(performance.now() - t0) + " ms";
+        document.getElementById("set-health-json").textContent = JSON.stringify(h, null, 2);
+        document.getElementById("set-health-state").replaceChildren(NM.chip(h.ai_available ? "success" : "review", h.ai_available ? T.health_ai_ready : T.health_rule_only));
+      })
+      .catch(function () { document.getElementById("set-health-state").replaceChildren(NM.chip("error", T.health_offline)); });
+  }
+  document.getElementById("set-health-refresh").addEventListener("click", check);
+  check();
+})();
+</script>
+{% endblock %}

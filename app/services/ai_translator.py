@@ -212,3 +212,26 @@ class AITranslator:
         if not result:
             raise AIError("AI answer is empty")
         return result
+
+    def describe_topology(self, summary: dict, lang: str = "th") -> str:
+        """Module 7.2: device roles, unresolved links and a readable explanation.
+
+        `summary` is derived from the IR (never raw text), so it holds no credentials; every
+        string is still re-checked before sending (defence in depth).
+        """
+        payload = json.dumps(summary, ensure_ascii=False)
+        if contains_secret(payload):
+            raise AIError("topology summary unexpectedly contains credential-like text")
+        language = "Thai" if lang == "th" else "English"
+        system = (
+            "You are a senior network engineer. You receive a JSON topology extracted by deterministic rules "
+            "from Cisco IOS-XE / Huawei VRP configurations. Describe each device's likely role, suggest how "
+            "unresolved trunk ports are probably connected, and explain the topology concisely. Never invent "
+            f"IP addresses. Answer in {language}."
+        )
+        user = 'Reply exactly as {"text": "<explanation>"}.\n\n' + payload
+        data = self._chat_json(system, user)
+        text = data.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise AIError("AI answer is empty")
+        return "\n".join(l for l in text.strip().splitlines()[:200] if not contains_secret(l))

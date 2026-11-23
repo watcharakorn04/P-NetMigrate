@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ t('history_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl space-y-6">
+  <div>
+    <h1 class="nm-h1">{{ t('history_title') }}</h1>
+    <p class="nm-sub">{{ t('history_subtitle') }}</p>
+  </div>
+
+  <!-- 5.1 summary tiles -->
+  <section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="nm-card"><div class="text-xs text-slate-500 dark:text-slate-400">{{ t('dash_conversions') }}</div><div id="d-conversions" class="mt-1 text-3xl font-semibold tabular-nums">—</div></div>
+    <div class="nm-card"><div class="text-xs text-slate-500 dark:text-slate-400">{{ t('dash_review') }}</div><div id="d-review" class="mt-1 text-3xl font-semibold tabular-nums">—</div><div class="mt-1 text-xs text-slate-400">{{ t('dash_review_hint') }}</div></div>
+    <div class="nm-card"><div class="text-xs text-slate-500 dark:text-slate-400">{{ t('dash_avg_coverage') }}</div><div id="d-coverage" class="mt-1 text-3xl font-semibold tabular-nums">—</div></div>
+    <div class="nm-card"><div class="text-xs text-slate-500 dark:text-slate-400">{{ t('secret_stripped') }}</div><div id="d-secrets" class="mt-1 text-3xl font-semibold tabular-nums">—</div><div class="mt-1 text-xs text-slate-400">{{ t('dash_secrets_hint') }}</div></div>
+  </section>
+
+  <section class="grid gap-6 lg:grid-cols-3">
+    <div class="nm-card lg:col-span-2">
+      <h2 class="text-sm font-semibold">{{ t('dash_trend') }}</h2>
+      <p class="text-xs text-slate-500 dark:text-slate-400">{{ t('dash_trend_hint') }}</p>
+      <div id="d-trend" class="mt-4 h-48" role="img" aria-label="{{ t('dash_trend') }}"></div>
+    </div>
+    <div class="nm-card space-y-5">
+      <div>
+        <h2 class="text-sm font-semibold">{{ t('dash_vendor_share') }}</h2>
+        <div id="d-share" class="mt-3"></div>
+      </div>
+      <div>
+        <h2 class="text-sm font-semibold">{{ t('dash_lines_by_provenance') }}</h2>
+        <ul id="d-lines" class="mt-3 space-y-1.5 text-sm"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5.3 history -->
+  <section class="nm-card p-0">
+    <div class="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+      <label class="min-w-[12rem] flex-1"><span class="nm-label">{{ t('search') }}</span>
+        <input id="h-q" type="search" class="nm-input" placeholder="{{ t('history_search_ph') }}"></label>
+      <label><span class="nm-label">{{ t('direction') }}</span>
+        <select id="h-direction" class="nm-input"><option value="">{{ t('all') }}</option><option value="c2h">{{ t('dir_c2h') }}</option><option value="h2c">{{ t('dir_h2c') }}</option></select></label>
+      <label><span class="nm-label">{{ t('mode') }}</span>
+        <select id="h-mode" class="nm-input"><option value="">{{ t('all') }}</option>{% for m in modes %}<option value="{{ m }}">{{ t('mode_' ~ m) }}</option>{% endfor %}</select></label>
+      <label><span class="nm-label">{{ t('kind') }}</span>
+        <select id="h-kind" class="nm-input"><option value="">{{ t('all') }}</option><option value="single">{{ t('kind_single') }}</option><option value="batch">{{ t('kind_batch') }}</option></select></label>
+      <a id="h-export" href="/api/history/export" class="nm-btn">{{ t('export_json') }}</a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="border-b border-slate-200 dark:border-slate-800">
+          <tr>
+            <th class="nm-th">#</th><th class="nm-th">{{ t('date') }}</th><th class="nm-th">{{ t('file') }} / {{ t('hostname') }}</th>
+            <th class="nm-th">{{ t('direction') }}</th><th class="nm-th">{{ t('mode') }}</th><th class="nm-th">{{ t('coverage') }}</th>
+            <th class="nm-th">{{ t('provenance_lines') }}</th><th class="nm-th"></th>
+          </tr>
+        </thead>
+        <tbody id="h-rows" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+      </table>
+    </div>
+    <div class="flex items-center gap-3 border-t border-slate-200 px-4 py-3 text-sm dark:border-slate-800">
+      <span id="h-count" class="text-slate-500 dark:text-slate-400"></span>
+      <div class="ml-auto flex gap-2">
+        <button id="h-prev" type="button" class="nm-btn px-2 py-1">‹ {{ t('prev') }}</button>
+        <button id="h-next" type="button" class="nm-btn px-2 py-1">{{ t('next') }} ›</button>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/history.js?v={{ asset_v }}"></script>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ t('batch_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl space-y-6">
+  <div>
+    <h1 class="nm-h1">{{ t('batch_title') }}</h1>
+    <p class="nm-sub">{{ t('batch_subtitle') }}</p>
+  </div>
+
+  <section class="nm-card">
+    <label id="dropzone" for="batch-files"
+           class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 transition hover:border-teal-400 hover:bg-teal-50/40 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-500/5">
+      <svg class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16"/></svg>
+      <span class="font-medium text-slate-700 dark:text-slate-200">{{ t('batch_drop') }}</span>
+      <span class="text-xs">{{ t('batch_drop_hint') }}</span>
+      <input id="batch-files" type="file" multiple accept=".txt,.cfg,.zip" class="sr-only">
+    </label>
+
+    <div class="mt-4 grid gap-3 sm:grid-cols-3">
+      <label>
+        <span class="nm-label">{{ t('batch_default_direction') }}</span>
+        <select id="batch-direction" class="nm-input">
+          <option value="auto">{{ t('dir_auto') }}</option>
+          <option value="c2h">{{ t('dir_c2h') }}</option>
+          <option value="h2c">{{ t('dir_h2c') }}</option>
+        </select>
+      </label>
+      <label>
+        <span class="nm-label">{{ t('mode') }}</span>
+        <select id="batch-mode" class="nm-input">
+          {% for m in modes %}
+          <option value="{{ m }}" {% if not mode_availability[m] %}disabled{% endif %} {% if m == default_mode %}selected{% endif %}>{{ t('mode_' ~ m) }}{% if not mode_availability[m] %} — {{ t('needs_key') }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="flex items-end gap-2">
+        <button id="batch-start" type="button" class="nm-btn-primary" disabled>{{ t('batch_start') }}</button>
+        <button id="batch-clear" type="button" class="nm-btn">{{ t('clear') }}</button>
+      </div>
+    </div>
+    <p id="batch-error" role="alert" class="mt-2 text-sm font-medium text-rose-600 dark:text-rose-400"></p>
+  </section>
+
+  <section class="nm-card p-0">
+    <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+      <h2 class="text-sm font-semibold">{{ t('batch_queue') }}</h2>
+      <span id="batch-progress-text" class="text-xs text-slate-500 dark:text-slate-400"></span>
+      <div class="ml-auto flex items-center gap-2">
+        <a id="batch-download" href="#" class="nm-btn-primary pointer-events-none opacity-40" aria-disabled="true">{{ t('batch_download_zip') }}</a>
+      </div>
+    </div>
+    <div class="h-1.5 bg-slate-100 dark:bg-slate-800"><div id="batch-bar" class="h-full bg-teal-500 transition-all" style="width:0%"></div></div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="border-b border-slate-200 dark:border-slate-800">
+          <tr>
+            <th class="nm-th">{{ t('file') }}</th>
+            <th class="nm-th">{{ t('direction') }}</th>
+            <th class="nm-th">{{ t('status') }}</th>
+            <th class="nm-th">{{ t('coverage') }}</th>
+            <th class="nm-th">{{ t('provenance_lines') }}</th>
+            <th class="nm-th">{{ t('secret_stripped') }}</th>
+            <th class="nm-th"></th>
+          </tr>
+        </thead>
+        <tbody id="batch-rows" class="divide-y divide-slate-100 dark:divide-slate-800">
+          <tr id="batch-empty"><td colspan="7" class="p-8 text-center text-slate-400">{{ t('batch_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/batch.js?v={{ asset_v }}"></script>
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ t('inv_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl space-y-6">
+  <div>
+    <h1 class="nm-h1">{{ t('inv_title') }}</h1>
+    <p class="nm-sub">{{ t('inv_subtitle') }}</p>
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-3">
+    <!-- form -->
+    <section class="nm-card xl:col-span-1">
+      <h2 id="inv-form-title" class="text-sm font-semibold">{{ t('inv_add') }}</h2>
+      <form id="inv-form" class="mt-3 grid gap-3" autocomplete="off">
+        <input type="hidden" id="inv-id">
+        <label><span class="nm-label">{{ t('inv_name') }} *</span><input id="inv-name" required maxlength="64" class="nm-input"></label>
+        <label><span class="nm-label">{{ t('inv_ip') }} *</span><input id="inv-ip" required placeholder="192.0.2.10" class="nm-input font-mono"></label>
+        <div class="grid grid-cols-2 gap-3">
+          <label><span class="nm-label">{{ t('vendor') }} *</span>
+            <select id="inv-vendor" class="nm-input"><option value="cisco_ios_xe">Cisco IOS-XE</option><option value="huawei_vrp">Huawei VRP</option></select></label>
+          <label><span class="nm-label">{{ t('inv_ssh_port') }}</span><input id="inv-port" type="number" min="1" max="65535" value="22" class="nm-input"></label>
+        </div>
+        <label><span class="nm-label">{{ t('inv_model') }}</span>
+          <select id="inv-model" class="nm-input"><option value="">{{ t('inv_model_none') }}</option>
+            {% for m in catalog %}<option value="{{ m.key }}" data-vendor="{{ m.vendor }}">{{ m.display }} ({{ m.capacity }} {{ t('ports') }})</option>{% endfor %}
+          </select></label>
+        <label><span class="nm-label">{{ t('inv_os') }}</span><input id="inv-os" maxlength="64" placeholder="17.9.4 / V200R010" class="nm-input"></label>
+        <label><span class="nm-label">{{ t('inv_location') }}</span><input id="inv-location" maxlength="128" class="nm-input"></label>
+        <label><span class="nm-label">{{ t('status') }}</span>
+          <select id="inv-status" class="nm-input">{% for s in statuses %}<option value="{{ s }}">{{ t('dev_status_' ~ s) }}</option>{% endfor %}</select></label>
+        <p class="rounded-md bg-slate-50 p-2 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">{{ t('inv_no_credentials') }}</p>
+        <p id="inv-error" role="alert" class="text-sm font-medium text-rose-600 dark:text-rose-400"></p>
+        <div class="flex gap-2">
+          <button type="submit" id="inv-save" class="nm-btn-primary">{{ t('save') }}</button>
+          <button type="button" id="inv-cancel" class="nm-btn hidden">{{ t('cancel') }}</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- list -->
+    <section class="nm-card p-0 xl:col-span-2">
+      <div class="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+        <label class="min-w-[12rem] flex-1"><span class="nm-label">{{ t('search') }}</span>
+          <input id="inv-q" type="search" class="nm-input" placeholder="{{ t('inv_search_ph') }}"></label>
+        <label><span class="nm-label">{{ t('vendor') }}</span>
+          <select id="inv-f-vendor" class="nm-input"><option value="">{{ t('all') }}</option><option value="cisco_ios_xe">Cisco IOS-XE</option><option value="huawei_vrp">Huawei VRP</option></select></label>
+        <label><span class="nm-label">{{ t('inv_location') }}</span><input id="inv-f-location" class="nm-input w-36"></label>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="border-b border-slate-200 dark:border-slate-800"><tr>
+            <th class="nm-th">{{ t('inv_name') }}</th><th class="nm-th">{{ t('inv_ip') }}</th><th class="nm-th">{{ t('vendor') }}</th>
+            <th class="nm-th">{{ t('inv_model') }} / {{ t('inv_os') }}</th><th class="nm-th">{{ t('inv_location') }}</th>
+            <th class="nm-th">{{ t('status') }}</th><th class="nm-th"></th></tr></thead>
+          <tbody id="inv-rows" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/inventory.js?v={{ asset_v }}"></script>
+{% endblock %}

@@ -21,6 +21,7 @@ from app.core.rules import tier1_interface as T1I
 from app.core.rules import tier1_vlan as T1V
 from app.core.rules import tier2_services as T2
 from app.core.rules import tier3_bgp_acl as T3
+from app.i18n_pages import MESSAGES_EN, UI_PAGES
 
 LANGS = ("th", "en")
 DEFAULT_LANG = "th"
@@ -51,7 +52,6 @@ def provenance_label(p: Provenance, lang: str) -> str:
 UI: dict[str, dict[str, str]] = {
     "app_name": {"th": "NetMigrate", "en": "NetMigrate"},
     "app_tagline": {"th": "ระบบแปลงการตั้งค่าอุปกรณ์เครือข่ายหลายผู้ผลิต", "en": "Multi-Vendor Network Configuration Conversion"},
-    "coming_soon": {"th": "เร็วๆ นี้", "en": "Coming Soon"},
     # navigation — the 8 modules of proposal §2.3.1
     "nav_m1": {"th": "แปลงไฟล์เดี่ยว", "en": "Single Conversion"},
     "nav_m2": {"th": "แปลงแบบกลุ่ม", "en": "Batch Conversion"},
@@ -160,9 +160,14 @@ UI: dict[str, dict[str, str]] = {
 }
 
 
+UI.update(UI_PAGES)
+
+
 def t(key: str, lang: str) -> str:
     entry = UI.get(key)
     if entry is None:
+        if key.startswith("prov_") and key[5:] in Provenance.__members__:
+            return provenance_label(Provenance[key[5:]], lang)
         return key
     return entry[normalize_lang(lang)]
 
@@ -227,6 +232,7 @@ _EXACT: dict[str, str] = {
     engine.NOTICE_HYBRID_NOTHING_TO_SEND: "The rules converted every line that may be sent to AI, so AI was not called",
     engine.NOTICE_NO_SELECTION: "None of the selected lines is labelled \"Unconverted\", so nothing was sent to AI",
 }
+_EXACT.update(MESSAGES_EN)
 
 # Feature names / explanations used inside reason_out_of_scope / reason_not_supported / reason_intentional.
 _PHRASES: dict[str, str] = {

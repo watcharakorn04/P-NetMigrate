@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ t('hw_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl space-y-6">
+  <div>
+    <h1 class="nm-h1">{{ t('hw_title') }}</h1>
+    <p class="nm-sub">{{ t('hw_subtitle') }}</p>
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-5">
+    <section class="nm-card space-y-4 xl:col-span-2">
+      <div>
+        <span class="nm-label">{{ t('hw_config_source') }}</span>
+        <div class="flex gap-4 text-sm">
+          <label class="inline-flex items-center gap-1.5"><input type="radio" name="hw-src" value="history" checked class="text-teal-600"> {{ t('dep_src_history') }}</label>
+          <label class="inline-flex items-center gap-1.5"><input type="radio" name="hw-src" value="text" class="text-teal-600"> {{ t('dep_src_text') }}</label>
+        </div>
+      </div>
+      <select id="hw-conversion" class="nm-input"><option value="">{{ t('dep_pick_conversion') }}</option></select>
+      <div id="hw-text-wrap" class="hidden space-y-2">
+        <select id="hw-vendor" class="nm-input"><option value="huawei_vrp">Huawei VRP</option><option value="cisco_ios_xe">Cisco IOS-XE</option></select>
+        <textarea id="hw-text" rows="10" spellcheck="false" class="nm-input nm-scroll font-mono text-[13px]" placeholder="{{ t('editor_placeholder') }}"></textarea>
+      </div>
+      <div>
+        <span class="nm-label">{{ t('hw_target') }}</span>
+        <div class="flex gap-4 text-sm">
+          <label class="inline-flex items-center gap-1.5"><input type="radio" name="hw-tgt" value="device" checked class="text-teal-600"> {{ t('hw_from_inventory') }}</label>
+          <label class="inline-flex items-center gap-1.5"><input type="radio" name="hw-tgt" value="model" class="text-teal-600"> {{ t('hw_from_catalog') }}</label>
+        </div>
+      </div>
+      <select id="hw-device" class="nm-input"><option value="">{{ t('hw_pick_device') }}</option></select>
+      <select id="hw-model" class="nm-input hidden">
+        {% for m in catalog %}<option value="{{ m.key }}" data-vendor="{{ m.vendor }}">{{ m.display }} — {{ m.capacity }} {{ t('ports') }}</option>{% endfor %}
+      </select>
+      <p id="hw-error" role="alert" class="text-sm font-medium text-rose-600 dark:text-rose-400"></p>
+      <button id="hw-check" type="button" class="nm-btn-primary">{{ t('hw_check') }}</button>
+      <p class="rounded-md bg-slate-50 p-2 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">{{ t('hw_rules_note') }}</p>
+    </section>
+
+    <section class="space-y-4 xl:col-span-3">
+      <div id="hw-empty" class="nm-card p-10 text-center text-sm text-slate-400">{{ t('hw_empty') }}</div>
+      <div id="hw-result" class="hidden space-y-4">
+        <div id="hw-verdict" class="rounded-xl border p-4"></div>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-5" id="hw-stats"></div>
+        <div class="nm-card p-0">
+          <div class="flex items-center border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <h2 class="text-sm font-semibold">{{ t('hw_ports') }}</h2>
+            <span id="hw-ranges" class="ml-auto font-mono text-xs text-slate-500 dark:text-slate-400"></span>
+          </div>
+          <div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="border-b border-slate-200 dark:border-slate-800"><tr>
+            <th class="nm-th">{{ t('hw_port') }}</th><th class="nm-th">{{ t('status') }}</th><th class="nm-th">{{ t('hw_exists') }}</th></tr></thead>
+            <tbody id="hw-ports" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody></table></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="nm-card p-0">
+    <h2 class="border-b border-slate-200 px-4 py-3 text-sm font-semibold dark:border-slate-800">{{ t('hw_catalog') }}</h2>
+    <div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="border-b border-slate-200 dark:border-slate-800"><tr>
+      <th class="nm-th">{{ t('inv_model') }}</th><th class="nm-th">{{ t('vendor') }}</th><th class="nm-th">{{ t('hw_kind') }}</th><th class="nm-th">{{ t('ports') }}</th><th class="nm-th">{{ t('hw_ranges') }}</th></tr></thead>
+      <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+        {% for m in catalog %}
+        <tr><td class="nm-td font-medium">{{ m.display }}</td><td class="nm-td text-xs">{{ 'Cisco IOS-XE' if m.vendor == 'cisco_ios_xe' else 'Huawei VRP' }}</td>
+          <td class="nm-td text-xs">{{ t('hw_kind_' ~ m.kind) }}</td><td class="nm-td tabular-nums">{{ m.capacity }}</td>
+          <td class="nm-td font-mono text-xs">{{ m.ranges|join(', ') }}</td></tr>
+        {% endfor %}
+      </tbody></table></div>
+    <p class="px-4 py-2 text-xs text-slate-400">{{ t('hw_catalog_note') }}</p>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/hardware.js?v={{ asset_v }}"></script>
+{% endblock %}

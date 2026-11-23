@@ -133,16 +133,24 @@ always pass. Do not weaken or skip them.
 
 ```
 app/
-  main.py                 FastAPI app (GET /api/health)
+  main.py                 FastAPI app: module 1 (convert/prescan/health) + includes routers
+  routes/                 modules 2–8 (batch, inventory, deploy, history, settings_page, topology, hardware)
+  web.py  deps.py         templates/nav/lang helpers; get_db / get_translator dependencies
+  db.py                   stdlib sqlite3, tables auto-created (conversions, devices, deployments, batch_skipped)
   config.py               settings (LLM_API_KEY, DATABASE_URL) via pydantic-settings
+  i18n.py  i18n_pages.py  TH/EN strings (every UI key must have both languages)
   core/
     ir.py                 IR + enums (Vendor, ConversionMode, SyntaxCategory, Provenance)
     secret_stripper.py    deterministic credential filter (security gate)
     parsers/  renderers/  rules/
-  services/               AI client, deployment (Netmiko), persistence
-  templates/  static/
+    hardware.py           module 8 catalogue + 4-verdict compatibility (pure rules)
+    topology.py advisory.py  module 7 rule-based topology + 3-level templates
+    diff.py  vendor_detect.py
+  services/               AI client, history, batch (in-memory zip), inventory, deploy (Netmiko)
+  templates/  static/     static URLs carry ?v={{ asset_v }} — bump web.ASSET_VERSION on UI changes
 tests/
-  fixtures/
+  conftest.py             per-test temp SQLite (real netmigrate.db never touched)
+  fixtures/  js/          js/ = Node harness running real page scripts (skipped without Node)
 ```
 
 Never commit `.env` or real device configs containing secrets.

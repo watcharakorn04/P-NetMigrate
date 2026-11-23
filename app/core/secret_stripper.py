@@ -135,3 +135,14 @@ def strip_secrets(
         stripped_line_numbers=stripped,
         advisory_lines=advisories,
     )
+
+
+def strip_secrets_keep_lines(text: str, vendor: Vendor) -> str:
+    """Like `strip_secrets`, but each stripped line is REPLACED by its fixed-text advisory
+    (in `vendor`'s comment syntax) instead of removed, so line N of the result is still
+    line N of the source. Used for text that is persisted (audit history before/after view).
+    """
+    sanitized = strip_secrets(text, vendor)
+    advisory = dict(zip(sanitized.stripped_line_numbers, sanitized.advisory_lines))
+    out = [advisory.get(no, line) for no, line in enumerate(text.splitlines(), start=1)]
+    return "\n".join(out) + ("\n" if out else "")
