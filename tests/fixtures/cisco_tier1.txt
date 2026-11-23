@@ -1,0 +1,58 @@
+! Lab core switch
+hostname SW1-CORE
+ip domain name lab.local
+!
+vlan 10
+ name SALES
+!
+vlan 20
+ name ENGINEERING
+!
+vlan 30-32
+!
+interface GigabitEthernet0/0/1
+ description Uplink-to-R1
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk allowed vlan 10,20,30-32
+!
+interface GigabitEthernet0/0/2
+ description PC-Sales
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ no shutdown
+!
+interface GigabitEthernet1/0/3
+ shutdown
+!
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+!
+interface Vlan10
+ ip address 192.168.10.1 255.255.255.0
+ ip ospf cost 10
+ ip ospf priority 100
+!
+interface Serial0/1/0
+ ip address 10.1.1.1 255.255.255.252
+ encapsulation ppp
+ ip ospf network point-to-point
+!
+interface Port-channel1
+ switchport mode trunk
+ switchport trunk allowed vlan 10
+!
+router ospf 1
+ router-id 1.1.1.1
+ passive-interface Vlan10
+ network 192.168.10.0 0.0.0.255 area 0
+ network 10.1.1.0 0.0.0.3 area 0
+ network 1.1.1.1 0.0.0.0 area 1
+ area 1 stub
+ default-information originate
+!
+ip route 0.0.0.0 0.0.0.0 10.1.1.2
+ip route 172.16.0.0 255.255.0.0 10.1.1.2 200
+!
+end

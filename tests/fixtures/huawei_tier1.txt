@@ -1,0 +1,52 @@
+!Software Version V200R010C00
+#
+sysname R2-EDGE
+#
+dns domain lab.local
+#
+vlan batch 10 20 30 to 32
+#
+vlan 10
+ description SALES
+#
+interface GigabitEthernet0/0/1
+ description Uplink
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 to 32
+#
+interface GigabitEthernet0/0/2
+ port link-type access
+ port default vlan 10
+ stp edged-port enable
+ undo shutdown
+#
+interface Vlanif10
+ ip address 192.168.10.1 24
+ ospf cost 10
+ ospf dr-priority 100
+#
+interface Serial0/1/0
+ link-protocol ppp
+ ip address 10.1.1.2 255.255.255.252
+ ospf network-type p2p
+#
+interface LoopBack0
+ ip address 2.2.2.2 32
+#
+interface Eth-Trunk1
+ port link-type trunk
+ port trunk allow-pass vlan 10
+#
+ospf 1 router-id 2.2.2.2
+ silent-interface Vlanif10
+ default-route-advertise
+ area 0.0.0.0
+  network 10.1.1.0 0.0.0.3
+ area 0.0.0.1
+  network 2.2.2.2 0.0.0.0
+  stub
+#
+ip route-static 0.0.0.0 0.0.0.0 10.1.1.1
+ip route-static 172.16.0.0 16 10.1.1.1 preference 200
+#
+return
