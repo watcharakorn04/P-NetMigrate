@@ -295,13 +295,17 @@ class TestVty:
         assert cmd(result, "authentication-mode aaa").provenance is Provenance.RULE
         assert block_result(result, "line vty").complete is True
 
-    def test_ssh_enables_stelnet_server_as_system_generated(self):
+    def test_ssh_advises_stelnet_server_as_comment_not_command(self):
+        """Proposal §2.3.2 item 5: only the BGP activation block is auto-generated as commands."""
         result = c2h(CISCO_VTY)
-        out = commands(result)
-        stelnet = cmd(result, "stelnet server enable")
-        assert stelnet.provenance is Provenance.SYSTEM
-        assert stelnet.warning
-        assert out.index("stelnet server enable") < out.index("user-interface vty 0 4")
+        assert not has_cmd(result, "stelnet server enable")
+        advice = comments_with(result, "stelnet server enable")
+        assert len(advice) == 1
+        assert advice[0].text == "# แนะนำให้เปิดใช้งาน SSH Server เพิ่มเติมด้วยคำสั่ง: stelnet server enable"
+        assert advice[0].provenance is Provenance.SYSTEM
+        assert advice[0].warning
+        texts = [l.text for l in result.lines]
+        assert texts.index(advice[0].text) < texts.index("user-interface vty 0 4")
 
     def test_telnet_only_does_not_enable_stelnet(self):
         result = c2h("line vty 0 4\n login local\n transport input telnet\n")
@@ -312,7 +316,8 @@ class TestVty:
     def test_ssh_and_telnet_maps_to_all(self, transport):
         result = c2h(f"line vty 0 4\n transport input {transport}\n")
         assert has_cmd(result, "protocol inbound all")
-        assert has_cmd(result, "stelnet server enable")
+        assert not has_cmd(result, "stelnet server enable")
+        assert comments_with(result, "stelnet server enable")
 
     def test_huawei_to_cisco(self):
         result = h2c("stelnet server enable\n" + HUAWEI_VTY)

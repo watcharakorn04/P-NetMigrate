@@ -23,6 +23,10 @@ class Vendor(str, Enum):
         """Comment character of this vendor's CLI ("!" Cisco, "#" Huawei)."""
         return "!" if self is Vendor.CISCO_IOS_XE else "#"
 
+    @property
+    def display_name(self) -> str:
+        return "Cisco IOS-XE" if self is Vendor.CISCO_IOS_XE else "Huawei VRP"
+
 
 class ConversionMode(str, Enum):
     HYBRID = "hybrid"  # default: rules first, AI only for gaps
@@ -54,6 +58,8 @@ class Provenance(str, Enum):
     SYSTEM = "ระบบสร้างขึ้นเอง"
     UNCONVERTED = "แปลงไม่ได้"
     NOT_NEEDED = "ไม่ต้องใช้คำสั่งนี้"
+    # Alias of AI (same member): "AI output, review required".
+    AI_REVIEW = "มาจาก AI ต้องตรวจสอบก่อนใช้"
 
     @property
     def deployable(self) -> bool:

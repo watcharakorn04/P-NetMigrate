@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}{{ t('page_title') }} · NetMigrate{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl">
+  <div class="mb-6">
+    <h1 class="text-xl font-semibold tracking-tight">{{ t('page_title') }}</h1>
+    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{{ t('page_subtitle') }}</p>
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-5">
+    <!-- ============================ input -->
+    <section class="space-y-4 xl:col-span-3">
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="min-w-[14rem] flex-1">
+            <span class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{{ t('direction') }}</span>
+            <select id="direction" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30 dark:border-slate-700 dark:bg-slate-950">
+              <option value="c2h">{{ t('dir_c2h') }}</option>
+              <option value="h2c">{{ t('dir_h2c') }}</option>
+            </select>
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16"/></svg>
+              {{ t('upload_txt') }}
+              <input id="file-input" type="file" accept=".txt,text/plain" class="sr-only">
+            </label>
+            <button type="button" data-sample="cisco" class="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">{{ t('sample_cisco') }}</button>
+            <button type="button" data-sample="huawei" class="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">{{ t('sample_huawei') }}</button>
+            <button type="button" id="clear-btn" class="rounded-md px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">{{ t('clear') }}</button>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <div class="mb-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <span class="font-medium uppercase tracking-wide">{{ t('source_config') }}</span>
+            <span><span id="file-name" class="mr-2 font-mono"></span><span id="line-count">0</span> {{ t('lines') }}</span>
+          </div>
+          <textarea id="editor" spellcheck="false" rows="18" placeholder="{{ t('editor_placeholder') }}"
+                    class="nm-scroll w-full resize-y rounded-md border border-slate-300 bg-slate-50 p-3 font-mono text-[13px] leading-5 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30 dark:border-slate-700 dark:bg-slate-950"></textarea>
+        </div>
+      </div>
+
+      <!-- modes -->
+      <fieldset class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <legend class="sr-only">{{ t('mode') }}</legend>
+        <div class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{{ t('mode') }}</div>
+        <div class="grid gap-2 sm:grid-cols-3">
+          {% for m in ['hybrid', 'rule_only', 'ai_only'] %}
+          {% set enabled = mode_availability[m] %}
+          <label data-mode-card="{{ m }}" {% if not enabled %}title="{{ t('mode_disabled_tip') }}"{% endif %}
+                 class="relative flex rounded-lg border p-3 text-sm {{ 'cursor-pointer border-slate-300 hover:border-teal-400 dark:border-slate-700' if enabled else 'cursor-not-allowed border-dashed border-slate-300 opacity-50 dark:border-slate-700' }} has-[:checked]:border-teal-500 has-[:checked]:bg-teal-50 has-[:checked]:ring-1 has-[:checked]:ring-teal-500 dark:has-[:checked]:bg-teal-500/10">
+            <input type="radio" name="mode" value="{{ m }}" class="sr-only" {% if not enabled %}disabled{% endif %} {% if m == default_mode %}checked{% endif %}>
+            <span>
+              <span class="block font-semibold">{{ t('mode_' ~ m) }}
+                {% if m == 'hybrid' %}<span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">{{ t('mode_default') }}</span>{% endif %}
+              </span>
+              <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">{{ t('mode_' ~ m ~ '_desc') }}</span>
+              {% if not enabled %}<span class="mt-1 block text-xs font-medium text-amber-600 dark:text-amber-400">{{ t('mode_disabled_tip') }}</span>{% endif %}
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <button id="prescan-btn" type="button" class="rounded-md border border-teal-600 px-4 py-2 text-sm font-semibold text-teal-700 hover:bg-teal-50 disabled:opacity-50 dark:text-teal-300 dark:hover:bg-teal-500/10">{{ t('btn_prescan') }}</button>
+          <button id="convert-btn" type="button" class="rounded-md bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-teal-700 disabled:opacity-50">{{ t('btn_convert') }}</button>
+          <span id="busy" class="hidden text-sm text-slate-500 dark:text-slate-400">{{ t('working') }}</span>
+          <span id="error" role="alert" class="text-sm font-medium text-rose-600 dark:text-rose-400"></span>
+        </div>
+      </fieldset>
+    </section>
+
+    <!-- ============================ pre-scan -->
+    <aside class="xl:col-span-2">
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm xl:sticky xl:top-20 dark:border-slate-800 dark:bg-slate-900">
+        <h2 class="text-sm font-semibold">{{ t('prescan_title') }}</h2>
+        <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{{ t('prescan_hint') }}</p>
+        <div id="prescan-empty" class="mt-6 rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400 dark:border-slate-700">—</div>
+        <div id="prescan-body" class="mt-4 hidden">
+          <div class="flex items-end justify-between">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{{ t('coverage') }}</span>
+            <span id="ps-coverage" class="text-3xl font-semibold tabular-nums">0%</span>
+          </div>
+          <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+            <div id="ps-bar" class="h-full rounded-full bg-teal-500 transition-all" style="width:0%"></div>
+          </div>
+          <dl class="mt-4 grid grid-cols-2 gap-2 text-sm">
+            <div class="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/60"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('total_lines') }}</dt><dd id="ps-total" class="font-semibold tabular-nums">0</dd></div>
+            <div class="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/60"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('supported_lines') }}</dt><dd id="ps-supported" class="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">0</dd></div>
+            <div class="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/60"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('unsupported_lines') }}</dt><dd id="ps-unsupported" class="font-semibold tabular-nums text-rose-600 dark:text-rose-400">0</dd></div>
+            <div class="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/60"><dt class="text-xs text-slate-500 dark:text-slate-400">{{ t('secret_stripped') }}</dt><dd id="ps-secrets" class="font-semibold tabular-nums text-sky-600 dark:text-sky-400">0</dd></div>
+          </dl>
+          <h3 class="mt-4 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{{ t('unsupported_list') }}</h3>
+          <ul id="ps-list" class="nm-scroll mt-2 max-h-80 space-y-1.5 overflow-y-auto text-sm"></ul>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ============================ result -->
+  <section class="mt-6 rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+      <h2 class="text-sm font-semibold">{{ t('result_title') }}</h2>
+      <span id="mode-info" class="text-xs text-slate-500 dark:text-slate-400"></span>
+      <div class="ml-auto flex flex-wrap items-center gap-2">
+        <label class="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+          <input id="show-labels" type="checkbox" checked class="rounded border-slate-300 text-teal-600 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800"> {{ t('show_labels') }}
+        </label>
+        <button id="copy-btn" type="button" disabled class="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">{{ t('copy') }}</button>
+        <button id="download-btn" type="button" disabled class="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">{{ t('download_txt') }}</button>
+      </div>
+    </div>
+
+    <div id="notices" class="hidden space-y-1 border-b border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200"></div>
+    <details id="warnings" class="hidden border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+      <summary class="cursor-pointer font-semibold">{{ t('warnings') }} (<span id="warn-count">0</span>)</summary>
+      <ul id="warn-list" class="mt-2 list-disc space-y-1 pl-5"></ul>
+    </details>
+
+    <div id="legend" class="hidden flex-wrap gap-2 border-b border-slate-200 px-4 py-2.5 text-xs dark:border-slate-800"></div>
+
+    <div id="result-empty" class="p-10 text-center text-sm text-slate-400">{{ t('result_empty') }}</div>
+    <div id="result-lines" class="nm-scroll hidden max-h-[38rem] overflow-auto py-2 font-mono text-[13px] leading-6"></div>
+
+    <!-- selective AI retry (rule_only, §2.3.1 item 1.2.5) -->
+    <div id="selective" class="hidden border-t border-slate-200 px-4 py-4 dark:border-slate-800">
+      <div class="flex flex-wrap items-center gap-3">
+        <div>
+          <h3 class="text-sm font-semibold">{{ t('selective_title') }}</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400">{{ t('selective_hint') }}</p>
+        </div>
+        <div class="ml-auto flex items-center gap-2">
+          <label class="inline-flex items-center gap-1.5 text-xs"><input id="select-all" type="checkbox" class="rounded border-slate-300 text-teal-600 dark:border-slate-600 dark:bg-slate-800"> {{ t('select_all') }}</label>
+          <span id="send-wrap" {% if not ai_available %}title="{{ t('selective_need_key') }}"{% endif %}>
+            <button id="send-selected" type="button" disabled class="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40">{{ t('send_selected') }}</button>
+          </span>
+        </div>
+      </div>
+      {% if not ai_available %}<p class="mt-2 text-xs font-medium text-amber-600 dark:text-amber-400">{{ t('selective_need_key') }}</p>{% endif %}
+      <ul id="selective-list" class="nm-scroll mt-3 max-h-72 space-y-1 overflow-y-auto text-sm"></ul>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>window.NM_AI_AVAILABLE = {{ ai_available|tojson }};</script>
+<script src="/static/js/convert.js"></script>
+{% endblock %}

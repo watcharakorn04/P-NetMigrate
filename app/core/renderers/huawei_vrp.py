@@ -13,6 +13,7 @@ from app.core.renderers.common import (
     WARN_HUAWEI_VTY_RANGE,
     WARN_RIP_NO_VERSION,
     WARN_STATIC_DEFAULT_PREFERENCE,
+    ADVISORY_STELNET,
     WARN_STELNET,
     LineWriter,
     acl_default_action_warning,
@@ -159,7 +160,9 @@ def _render_bgp(w: LineWriter, ir: DeviceConfigIR) -> None:
 def _render_vty(w: LineWriter, ir: DeviceConfigIR) -> None:
     ssh_lines = [v for v in ir.vty_lines if v.transport and "ssh" in v.transport]
     if ssh_lines:
-        w.cmd("stelnet server enable", D, ssh_lines[0].field_lines.get("transport"), WARN_STELNET, SYSTEM)
+        # Proposal §2.3.2 item 5: the BGP activation block is the ONLY auto-filled command.
+        # The SSH service switch is therefore advice in a comment, not a generated command.
+        w.advisory(ADVISORY_STELNET, ssh_lines[0].field_lines.get("transport"), WARN_STELNET)
     for vty in ir.vty_lines:
         fl = vty.field_lines
         warn = WARN_HUAWEI_VTY_RANGE if vty.last > HUAWEI_VTY_SAFE_MAX else None

@@ -31,16 +31,33 @@ REASON_BAD_VALUE = "ค่าในคำสั่งไม่ถูกต้อ
 REASON_UNKNOWN_IF = "ไม่รู้จักชื่อ Interface ในคำสั่งนี้"
 
 
+_PREFIX_OUT_OF_SCOPE = "อยู่นอกขอบเขตของระบบ"
+_PREFIX_NOT_SUPPORTED = "ยังไม่รองรับ:"
+_PREFIX_INTENTIONAL = "ระบบตั้งใจไม่แปลงคำสั่งนี้:"
+
+
 def reason_out_of_scope(feature: str) -> str:
-    return f"อยู่นอกขอบเขตของระบบ ({feature}) — ต้องตรวจสอบและตั้งค่าเอง"
+    return f"{_PREFIX_OUT_OF_SCOPE} ({feature}) — ต้องตรวจสอบและตั้งค่าเอง"
 
 
 def reason_not_supported(feature: str) -> str:
-    return f"ยังไม่รองรับ: {feature} — ต้องตรวจสอบและตั้งค่าเอง"
+    return f"{_PREFIX_NOT_SUPPORTED} {feature} — ต้องตรวจสอบและตั้งค่าเอง"
 
 
 def reason_intentional(why: str) -> str:
-    return f"ระบบตั้งใจไม่แปลงคำสั่งนี้: {why}"
+    return f"{_PREFIX_INTENTIONAL} {why}"
+
+
+def auto_ai_eligible(reason: str | None) -> bool:
+    """May hybrid mode send this unconverted line to AI on its own?
+
+    No for out-of-scope features, "not supported" features and intentionally-not-converted
+    commands (proposal §2.3.2 items 3 and 7): stating "แปลงไม่ได้" is safer than a
+    plausible-looking command with a shifted meaning. The user can still pick these lines
+    manually from a rule_only result (§2.3.1 item 1.2.5).
+    """
+    text = reason or ""
+    return not text.startswith((_PREFIX_OUT_OF_SCOPE, _PREFIX_NOT_SUPPORTED, _PREFIX_INTENTIONAL))
 
 
 # Proposal §2.3.2 item 3: always out of scope, any vendor, any position.

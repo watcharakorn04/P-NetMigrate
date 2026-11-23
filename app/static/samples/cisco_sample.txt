@@ -1,0 +1,56 @@
+! NetMigrate demo — Cisco IOS-XE branch router (fictional lab values)
+hostname BR1-EDGE
+ip domain name lab.local
+enable secret 0 DEMO-ONLY-NOT-A-REAL-SECRET
+!
+vlan 10
+ name USERS
+vlan 20
+ name VOICE
+!
+ip access-list extended WEB-IN
+ permit tcp any host 10.10.10.10 eq 443
+ deny ip any any
+!
+interface GigabitEthernet0/0/0
+ description Uplink-to-Core
+ ip address 10.0.0.1 255.255.255.252
+ ip access-group WEB-IN in
+ no shutdown
+!
+interface GigabitEthernet0/0/1
+ description Users
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+!
+interface GigabitEthernet0/0/2
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk allowed vlan 10,20
+!
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+!
+router ospf 1
+ router-id 1.1.1.1
+ passive-interface Loopback0
+ network 10.0.0.0 0.0.0.3 area 0
+ network 1.1.1.1 0.0.0.0 area 0
+!
+router bgp 65001
+ neighbor 10.0.0.2 remote-as 65002
+ network 1.1.1.1 mask 255.255.255.255
+!
+ip route 0.0.0.0 0.0.0.0 10.0.0.2
+ip route 172.16.0.0 255.255.0.0 10.0.0.2 name BACKUP
+ip http server
+ipv6 unicast-routing
+ntp server 10.9.9.1
+logging host 10.9.9.2
+!
+line vty 0 4
+ login local
+ transport input ssh
+!
+end

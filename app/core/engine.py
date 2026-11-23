@@ -1,27 +1,51 @@
-"""Conversion pipeline entrypoint.
+"""Conversion pipeline entrypoint (proposal §2.3.1 item 1.2).
 
     raw text -> strip_secrets -> Parser -> IR -> Renderer -> labelled lines
+                     |
+                     +-> (hybrid / ai_only / user-selected) sanitized lines -> AI
+                         -> lines labelled "มาจาก AI ต้องตรวจสอบก่อนใช้"
 
-Milestone 2 implements the rule-only path, which is also the fallback whenever the AI
-service is unavailable (proposal §2.3.2 item 11: the service never stops).
+Security gate: `strip_secrets()` ALWAYS runs first, so nothing that reaches the AI client
+was ever a credential line; the client re-applies the same filter (defence in depth) and
+every AI answer line is checked again before it can reach the output.
+
+Fallback: when no translator is available, or the AI call fails or answers garbage, the
+result is exactly the rule_only result plus a notice (§2.3.2 item 11: never stop).
 """
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass, field
+from typing import Callable, Iterable, Optional, Sequence
 
 from pydantic import BaseModel
 
 from app.core.ir import ConversionMode, DeviceConfigIR, Provenance, RenderedLine, Vendor
 from app.core.parsers import ParseResult, parse_config
 from app.core.renderers import render_config
-from app.core.rules.base import BlockResult, LineKind
-from app.core.secret_stripper import SanitizedResult, strip_secrets
+from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
+from app.core.secret_stripper import SanitizedResult, contains_secret, strip_secrets
+from app.services.ai_translator import AIError, AIItem, Translator
 from app.services.mode_selector import resolve_mode
 
 NOTICE_AI_UNAVAILABLE = (
     "บริการ AI ไม่พร้อมใช้งาน ระบบจึงแปลงแบบกฎอย่างเดียว (rule_only) "
     "บรรทัดที่กฎแปลงไม่ได้ถูกคงไว้พร้อมป้าย \"แปลงไม่ได้\" และเลือกส่งให้ AI ภายหลังได้"
+)
+NOTICE_AI_FAILED = (
+    "เรียกใช้บริการ AI ไม่สำเร็จหรือ AI ตอบกลับในรูปแบบที่ใช้ไม่ได้ ระบบจึงแสดงผลแบบกฎอย่างเดียว (rule_only) "
+    "บรรทัดที่กฎแปลงไม่ได้ยังคงป้าย \"แปลงไม่ได้\""
+)
+NOTICE_AI_REVIEW = (
+    "มีบรรทัดที่ AI แปลให้ ซึ่งติดป้าย \"มาจาก AI ต้องตรวจสอบก่อนใช้\" "
+    "กรุณาตรวจสอบกับเอกสารของผู้ผลิตก่อนนำไปใช้ (ระบบไม่ใช้ค่าความมั่นใจที่ AI รายงานเอง)"
+)
+NOTICE_HYBRID_NOTHING_TO_SEND = "กฎแปลงได้ครบทุกบรรทัดที่ระบบอนุญาตให้ส่ง AI จึงไม่ได้เรียกใช้ AI"
+NOTICE_NO_SELECTION = "ไม่มีบรรทัดที่เลือกซึ่งมีป้าย \"แปลงไม่ได้\" จึงไม่ได้ส่งข้อมูลให้ AI"
+ADVISORY_AI_SECRET = (
+    "บรรทัดที่ AI ตอบกลับมีลักษณะเป็นข้อมูลลับ (รหัสผ่าน/บัญชีผู้ใช้/คีย์) ระบบจึงตัดออก "
+    "กรุณาตั้งค่าส่วนนี้เองบนอุปกรณ์ปลายทาง"
 )
 
 
@@ -47,6 +71,19 @@ class ConversionResult:
     unconverted_items: list[UnsupportedItem] = field(default_factory=list)
     notices: list[str] = field(default_factory=list)
     secret_stripped_count: int = 0
+    # Source line numbers whose (sanitized) text was sent to the AI service in this run.
+    ai_sent_line_numbers: list[int] = field(default_factory=list)
+
+    @property
+    def ai_line_count(self) -> int:
+        return sum(1 for l in self.lines if l.provenance is Provenance.AI and not l.is_comment)
+
+    @property
+    def provenance_counts(self) -> dict[str, int]:
+        counts = {p.name: 0 for p in Provenance}
+        for l in self.lines:
+            counts[l.provenance.name] += 1
+        return counts
 
     @property
     def text(self) -> str:
@@ -81,19 +118,21 @@ def unsupported_items(parsed: ParseResult) -> list[UnsupportedItem]:
     ]
 
 
-def convert(
+def _collect_warnings(lines: Iterable[RenderedLine]) -> list[str]:
+    warnings: list[str] = []
+    for line in lines:
+        if line.warning and line.provenance in (Provenance.RULE, Provenance.SYSTEM) and line.warning not in warnings:
+            warnings.append(line.warning)
+    return warnings
+
+
+def _rule_result(
     raw: str,
     source_vendor: Vendor,
     target_vendor: Vendor,
-    mode: ConversionMode = ConversionMode.RULE_ONLY,
-    ai_available: bool = False,
-) -> ConversionResult:
-    check_vendor_pair(source_vendor, target_vendor)
-    effective = resolve_mode(mode, ai_available)
-    notices = [NOTICE_AI_UNAVAILABLE] if effective is not mode else []
-    if effective.requires_ai:
-        raise NotImplementedError("AI-assisted modes are not implemented yet; use rule_only")
-
+    requested: ConversionMode,
+    notices: Optional[list[str]] = None,
+) -> tuple[ConversionResult, ParseResult, SanitizedResult]:
     sanitized, parsed = sanitize_and_parse(raw, source_vendor, target_vendor)
 
     advisories = [
@@ -109,21 +148,276 @@ def convert(
         if not line.is_comment and status and status.kind is LineKind.RULE and status.category:
             line.category = status.category
 
-    warnings: list[str] = []
-    for line in lines:
-        if line.warning and line.provenance in (Provenance.RULE, Provenance.SYSTEM) and line.warning not in warnings:
-            warnings.append(line.warning)
-
-    return ConversionResult(
+    result = ConversionResult(
         source_vendor=source_vendor,
         target_vendor=target_vendor,
-        requested_mode=mode,
-        effective_mode=effective,
+        requested_mode=requested,
+        effective_mode=ConversionMode.RULE_ONLY,
         lines=lines,
         ir=parsed.ir,
         blocks=parsed.blocks,
-        warnings=warnings,
+        warnings=_collect_warnings(lines),
         unconverted_items=unsupported_items(parsed),
-        notices=notices,
+        notices=list(notices or []),
         secret_stripped_count=len(sanitized.stripped_line_numbers),
     )
+    return result, parsed, sanitized
+
+
+# ----------------------------------------------------------------------------- AI work units
+
+
+@dataclass
+class _Job:
+    item: AIItem
+    line_numbers: list[int]  # source lines this job translates
+    replace_rule_lines: bool = False  # complex-command block: AI output replaces the rule output
+
+
+# (block, line number, line status) -> send this unconverted line to AI?
+Picker = Callable[[BlockResult, int, LineStatus], bool]
+
+
+def _block_spans(parsed: ParseResult) -> list[tuple[BlockResult, list[int]]]:
+    """Each top-level block with the effective source line numbers it contains."""
+    starts = [b.line_no for b in parsed.blocks]
+    spans: list[list[int]] = [[] for _ in parsed.blocks]
+    for no, status in parsed.line_status.items():
+        if not status.effective:
+            continue
+        idx = bisect.bisect_right(starts, no) - 1
+        if idx >= 0:
+            spans[idx].append(no)
+    return list(zip(parsed.blocks, spans))
+
+
+def _rendered_header(lines: list[RenderedLine], header_no: int) -> Optional[str]:
+    for line in lines:
+        if line.source_line == header_no and not line.is_comment and line.provenance is Provenance.RULE:
+            return line.text.strip()
+    return None
+
+
+def _source_line(raw_lines: list[str], no: int) -> str:
+    return raw_lines[no - 1].expandtabs(4).rstrip() if 0 < no <= len(raw_lines) else ""
+
+
+def _build_jobs(
+    raw: str,
+    parsed: ParseResult,
+    rendered: list[RenderedLine],
+    pick: Picker,
+    complex_prefixes: Sequence[str] = (),
+) -> list[_Job]:
+    """Group the lines to send into one job per top-level block (the block header is
+    passed as context when only some sub-commands are sent)."""
+    raw_lines = raw.splitlines()
+    jobs: list[_Job] = []
+    for block, numbers in _block_spans(parsed):
+        if not numbers:
+            continue
+        header_lower = block.header.lower()
+        if any(header_lower.startswith(p) for p in complex_prefixes):
+            # Proposal §2.3.1 item 1.2.2, case 3: configured complex command -> whole block to AI.
+            text = [_source_line(raw_lines, n) for n in numbers]
+            jobs.append(_Job(AIItem(id=numbers[0], lines=text), numbers, replace_rule_lines=True))
+            continue
+        status = parsed.line_status
+        chosen = [n for n in numbers if status[n].kind is LineKind.UNCONVERTED and pick(block, n, status[n])]
+        if not chosen:
+            continue
+        item = AIItem(id=chosen[0], lines=[_source_line(raw_lines, n) for n in chosen])
+        if block.line_no not in chosen:
+            item.parent_source = block.header
+            item.parent_target = _rendered_header(rendered, block.line_no)
+            item.lines = [l if l[:1].isspace() else " " + l.strip() for l in item.lines]
+        jobs.append(_Job(item, chosen))
+    # Defence in depth: never hand a credential-looking line to the client.
+    for job in jobs:
+        job.item.lines = [l for l in job.item.lines if l.strip() and not contains_secret(l)]
+    return [j for j in jobs if j.item.lines]
+
+
+def _hybrid_pick(block: BlockResult, no: int, status: LineStatus) -> bool:
+    # Proposal §2.3.1 item 1.2.2 cases 1 and 2: no rule matched / rule reported incomplete.
+    return (block.rule is None or not block.complete) and auto_ai_eligible(status.reason)
+
+
+def _ai_lines(answer: list[str], job: _Job, target: Vendor, header: Optional[str] = None) -> list[RenderedLine]:
+    marker = target.comment_marker
+    first = job.line_numbers[0]
+    if header is None:
+        numbers = ", ".join(str(n) for n in job.line_numbers)
+        header = f"แปลโดย AI จากบรรทัดต้นทาง {numbers}"
+    out = [
+        RenderedLine(
+            text=f"{marker} [{Provenance.AI.value}] {header}",
+            provenance=Provenance.AI,
+            source_line=first,
+            is_comment=True,
+        )
+    ]
+    parent = (job.item.parent_target or "").strip()
+    for text in answer:
+        if job.item.parent_source:
+            if parent and text.strip() == parent:
+                continue  # AI repeated the already-converted parent header
+            if not text[:1].isspace() and not text.startswith(marker):
+                text = " " + text
+        if contains_secret(text):
+            # Non-Negotiable #2: never output a secret, even one the AI made up.
+            out.append(
+                RenderedLine(
+                    text=f"{marker} [{Provenance.SYSTEM.value}] {ADVISORY_AI_SECRET}",
+                    provenance=Provenance.SYSTEM,
+                    source_line=first,
+                    is_comment=True,
+                )
+            )
+            continue
+        out.append(
+            RenderedLine(
+                text=text,
+                provenance=Provenance.AI,
+                source_line=first,
+                is_comment=text.lstrip().startswith(marker),
+            )
+        )
+    return out
+
+
+def _apply_ai(
+    lines: list[RenderedLine], jobs: list[_Job], answers: dict[int, list[str]], target: Vendor
+) -> tuple[list[RenderedLine], set[int]]:
+    """Replace the "แปลงไม่ได้" comments (or, for complex blocks, the rule output) of every
+    answered job with the AI lines, at the position of the first replaced line. Jobs the
+    AI did not answer keep their "แปลงไม่ได้" comments."""
+    remove: set[int] = set()
+    insert: dict[int, list[RenderedLine]] = {}
+    tail: list[RenderedLine] = []
+    translated: set[int] = set()
+    for job in jobs:
+        answer = answers.get(job.item.id)
+        if not answer:
+            continue
+        wanted = set(job.line_numbers)
+        idxs = [
+            i
+            for i, l in enumerate(lines)
+            if l.source_line in wanted
+            and (job.replace_rule_lines or l.provenance is Provenance.UNCONVERTED)
+            and i not in remove
+        ]
+        new = _ai_lines(answer, job, target)
+        if idxs:
+            remove.update(idxs)
+            insert.setdefault(idxs[0], []).extend(new)
+        else:
+            tail.extend(new)
+        translated.update(wanted)
+
+    out: list[RenderedLine] = []
+    for i, line in enumerate(lines):
+        out.extend(insert.get(i, []))
+        if i not in remove:
+            out.append(line)
+    if tail:
+        last = out[-1] if out else None
+        end = len(out) - 1 if last and not last.is_comment and last.text.strip() in ("return", "end") else len(out)
+        out[end:end] = tail
+    return out, translated
+
+
+def _run_jobs(result: ConversionResult, jobs: list[_Job], translator: Translator) -> ConversionResult:
+    """Send jobs to AI and merge. On AIError the rule-only result is returned with a notice."""
+    result.ai_sent_line_numbers = sorted(n for j in jobs for n in j.line_numbers)
+    try:
+        answers = translator.translate_items([j.item for j in jobs], result.source_vendor, result.target_vendor)
+    except AIError:
+        result.effective_mode = ConversionMode.RULE_ONLY
+        result.notices.append(NOTICE_AI_FAILED)
+        return result
+    result.lines, translated = _apply_ai(result.lines, jobs, answers, result.target_vendor)
+    result.unconverted_items = [i for i in result.unconverted_items if i.line_no not in translated]
+    if translated:
+        result.notices.append(NOTICE_AI_REVIEW)
+    return result
+
+
+# ----------------------------------------------------------------------------- public API
+
+
+def convert(
+    raw: str,
+    source_vendor: Vendor,
+    target_vendor: Vendor,
+    mode: ConversionMode = ConversionMode.RULE_ONLY,
+    ai_available: Optional[bool] = None,
+    translator: Optional[Translator] = None,
+    complex_commands: Sequence[str] = (),
+) -> ConversionResult:
+    """Convert one configuration.
+
+    translator        — AI client; None means AI is unavailable (-> rule_only + notice).
+    ai_available      — False force-disables AI even with a translator; default: translator given.
+    complex_commands  — block-header prefixes hybrid mode always sends to AI (§2.3.1 1.2.2).
+    """
+    check_vendor_pair(source_vendor, target_vendor)
+    usable = translator is not None and ai_available is not False
+    effective = resolve_mode(mode, usable)
+    notices = [NOTICE_AI_UNAVAILABLE] if effective is not mode else []
+
+    result, parsed, sanitized = _rule_result(raw, source_vendor, target_vendor, mode, notices)
+    if effective is ConversionMode.RULE_ONLY or translator is None:
+        return result
+
+    if effective is ConversionMode.HYBRID:
+        result.effective_mode = ConversionMode.HYBRID
+        prefixes = [p.strip().lower() for p in complex_commands if p.strip()]
+        jobs = _build_jobs(raw, parsed, result.lines, _hybrid_pick, prefixes)
+        if not jobs:
+            result.notices.append(NOTICE_HYBRID_NOTHING_TO_SEND)
+            return result
+        return _run_jobs(result, jobs, translator)
+
+    # AI_ONLY: the whole SANITIZED file goes to AI (Non-Negotiable #1 — never the raw text).
+    sent = [no for no, s in parsed.line_status.items() if s.effective]
+    result.ai_sent_line_numbers = sent
+    try:
+        answer = translator.translate_config(sanitized.sanitized_text, source_vendor, target_vendor)
+    except AIError:
+        result.notices.append(NOTICE_AI_FAILED)
+        return result
+    stripped = set(sanitized.stripped_line_numbers)
+    advisories = [
+        l for l in result.lines if l.provenance is Provenance.SYSTEM and l.is_comment and l.source_line in stripped
+    ]
+    job = _Job(AIItem(id=sent[0] if sent else 1, lines=[]), sent or [1])
+    result.lines = advisories + _ai_lines(answer, job, target_vendor, header="แปลทั้งไฟล์โดย AI (โหมด AI อย่างเดียว)")
+    result.effective_mode = ConversionMode.AI_ONLY
+    result.warnings = []
+    result.unconverted_items = []
+    result.notices.append(NOTICE_AI_REVIEW)
+    return result
+
+
+def convert_selected(
+    raw: str,
+    source_vendor: Vendor,
+    target_vendor: Vendor,
+    line_numbers: Iterable[int],
+    translator: Optional[Translator],
+) -> ConversionResult:
+    """Rule-only conversion, then send ONLY the user-picked "แปลงไม่ได้" lines to AI
+    (proposal §2.3.1 item 1.2.5). Selected lines that are not unconverted are ignored."""
+    check_vendor_pair(source_vendor, target_vendor)
+    selected = set(line_numbers)
+    notices = [] if translator is not None else [NOTICE_AI_UNAVAILABLE]
+    result, parsed, _ = _rule_result(raw, source_vendor, target_vendor, ConversionMode.RULE_ONLY, notices)
+    if translator is None:
+        return result
+    jobs = _build_jobs(raw, parsed, result.lines, lambda b, no, s: no in selected)
+    if not jobs:
+        result.notices.append(NOTICE_NO_SELECTION)
+        return result
+    return _run_jobs(result, jobs, translator)

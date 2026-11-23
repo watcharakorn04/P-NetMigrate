@@ -33,6 +33,18 @@ class LineWriter:
             return
         self.lines.append(RenderedLine(text=self.marker, provenance=Provenance.RULE, category=D, is_comment=True))
 
+    def advisory(self, text: str, source_line: Optional[int] = None, warning: Optional[str] = None) -> None:
+        """System-written advice as a target-vendor comment (never a command, never deployed)."""
+        self.lines.append(
+            RenderedLine(
+                text=f"{self.marker} {text}",
+                provenance=Provenance.SYSTEM,
+                source_line=source_line,
+                is_comment=True,
+                warning=warning,
+            )
+        )
+
     def comment(self, note: NoteIR) -> None:
         """Free-text source comment with the target vendor's marker (comment-prefix rule)."""
         self.lines.append(
@@ -86,9 +98,10 @@ WARN_ACL_NUMBER_ASSIGNED = (
 )
 WARN_HUAWEI_ACL_NAME = "ชื่อ ACL ของ Huawei ต้องขึ้นต้นด้วยตัวอักษรและยาวไม่เกิน 32 ตัวอักษร กรุณาตรวจสอบ"
 WARN_STELNET = (
-    "Huawei ต้องเปิดบริการ SSH ด้วยคำสั่งนี้ ระบบจึงเพิ่มให้ — ยังต้องสร้าง RSA key (rsa local-key-pair create) "
-    "และตั้งค่าบัญชีผู้ใช้ SSH เองบนอุปกรณ์ปลายทาง (ระบบไม่แปลงบัญชีผู้ใช้)"
+    "Huawei ต้องเปิดบริการ SSH ด้วยคำสั่ง stelnet server enable — ระบบไม่เติมคำสั่งนี้ให้เอง (เขียนไว้เป็นคำแนะนำใน Comment) "
+    "และยังต้องสร้าง RSA key (rsa local-key-pair create) และตั้งค่าบัญชีผู้ใช้ SSH เองบนอุปกรณ์ปลายทาง (ระบบไม่แปลงบัญชีผู้ใช้)"
 )
+ADVISORY_STELNET = "แนะนำให้เปิดใช้งาน SSH Server เพิ่มเติมด้วยคำสั่ง: stelnet server enable"
 WARN_CISCO_SSH = (
     "Cisco ต้องมี ip domain name และ RSA key (crypto key generate rsa) ก่อน SSH จะใช้งานได้ "
     "ระบบไม่สร้าง key และไม่แปลงบัญชีผู้ใช้ให้ กรุณาตั้งค่าเองบนอุปกรณ์ปลายทาง"

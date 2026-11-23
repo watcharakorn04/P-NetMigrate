@@ -1,0 +1,46 @@
+# NetMigrate demo — Huawei VRP border router (fictional lab values)
+sysname R2-BORDER
+local-user demo password irreversible-cipher DEMO-ONLY-NOT-A-REAL-SECRET
+#
+vlan batch 10 20
+#
+acl number 3000
+ rule 5 permit tcp destination 10.0.0.1 0 destination-port eq 22
+ rule 10 deny ip
+#
+interface GigabitEthernet0/0/0
+ description Uplink-to-BR1
+ ip address 10.0.0.2 255.255.255.252
+ traffic-filter inbound acl 3000
+#
+interface GigabitEthernet0/0/1
+ port link-type trunk
+ port trunk allow-pass vlan 10 20
+#
+interface LoopBack0
+ ip address 2.2.2.2 255.255.255.255
+#
+ospf 1 router-id 2.2.2.2
+ silent-interface LoopBack0
+ area 0.0.0.0
+  network 10.0.0.0 0.0.0.3
+  network 2.2.2.2 0.0.0.0
+#
+bgp 65002
+ peer 10.0.0.1 as-number 65001
+ #
+ ipv4-family unicast
+  network 2.2.2.2 255.255.255.255
+  peer 10.0.0.1 enable
+#
+ip route-static 0.0.0.0 0.0.0.0 10.0.0.1
+lldp enable
+ntp-service unicast-server 10.9.9.1
+info-center loghost 10.9.9.2
+#
+stelnet server enable
+user-interface vty 0 4
+ authentication-mode aaa
+ protocol inbound ssh
+#
+return

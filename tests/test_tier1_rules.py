@@ -628,11 +628,11 @@ class TestEngineSecurity:
         for secret in secrets:
             assert secret not in everything, secret
         system = [l for l in result.lines if l.provenance is Provenance.SYSTEM]
-        advisories = [l for l in system if l.is_comment]
+        advisories = [l for l in system if l.is_comment and "ตัดข้อมูลลับออก" in l.text]
         assert len(advisories) == result.secret_stripped_count > 0
         target_marker = (H if vendor is C else C).comment_marker
         assert all(l.text.startswith(target_marker) for l in advisories)
-        # The only system-generated COMMANDS allowed are the mandatory Huawei companions
-        # (BGP activation block, SSH service switch) — never anything derived from a secret.
+        # The only system-generated COMMANDS allowed are the mandatory Huawei BGP activation
+        # block (proposal §2.3.2 item 5) — never anything derived from a secret.
         generated = [l.text.strip() for l in system if not l.is_comment]
-        assert all(re.fullmatch(r"ipv4-family unicast|peer \S+ enable|stelnet server enable", t) for t in generated), generated
+        assert all(re.fullmatch(r"ipv4-family unicast|peer \S+ enable", t) for t in generated), generated
