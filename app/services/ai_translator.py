@@ -126,7 +126,10 @@ _NAVIGATION_RULES = {
 # Extra target-specific constraints (mainly for ai_only, where the whole file goes to the AI).
 _TARGET_EXTRA_RULES = {
     Vendor.HUAWEI_VRP: (
-        "- When translating configuration commands, the very first output line must be 'system-view'.\n"
+        "- Only when translating a complete configuration file (AI-only mode), the very first output "
+        "line must be 'system-view'. When translating partial or selected blocks/items (hybrid mode or "
+        "user-selected lines), the result is merged into a file that already starts with 'system-view' "
+        "and ends with 'return', so you MUST NOT emit 'system-view' or 'return' in those answers.\n"
         "- Never invent hybrid Cisco/Huawei commands such as 'undo ip domain lookup'. "
         "'no ip domain-lookup' is not needed (ไม่ต้องใช้คำสั่งนี้) because Huawei VRP disables DNS lookup "
         "by default, so return no command for it.\n"

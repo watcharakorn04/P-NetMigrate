@@ -10,6 +10,10 @@
   write [memory] / copy run start         <-> save force / save       (T, rendered after
                                               end/return, with a warning)
   no ip domain-lookup                      -> "ไม่ต้องใช้คำสั่งนี้" (Huawei default)
+  enable (bare, not enable secret/password) -> "ไม่ต้องใช้คำสั่งนี้" (no separate exec modes)
+  service password-encryption              -> "ไม่ต้องใช้คำสั่งนี้" (cipher encrypts by default)
+  logging synchronous (top level or inside  -> "ไม่ต้องใช้คำสั่งนี้" (VRP does not interrupt
+    any line block, even an unclaimed one)      typed CLI input with logs by default)
   "!" comment                             <-> "#" comment             (D, comment prefix)
 
 Mode-navigation and save lines are not configuration intent: they are recorded only in
@@ -30,6 +34,29 @@ REASON_DOMAIN_LOOKUP = (
     "Huawei VRP ไม่เปิดการแปลงชื่อผ่าน DNS (domain lookup) เป็นค่าเริ่มต้นอยู่แล้ว จึงไม่ต้องสั่งปิด"
 )
 REASON_TOP_LEVEL_EXIT = "ไฟล์ผลลัพธ์ปิดท้ายด้วยคำสั่งออกจากโหมดตั้งค่า (end/return) ให้อยู่แล้ว"
+REASON_LOGGING_SYNCHRONOUS = (
+    "Huawei VRP ไม่ขัดจังหวะคำสั่งที่กำลังพิมพ์ด้วยข้อความ log บน console/VTY เป็นค่าเริ่มต้นอยู่แล้ว"
+)
+REASON_ENABLE = (
+    "Huawei VRP ไม่มีโหมด user/privileged exec แยกกัน สิทธิ์ควบคุมด้วย user privilege level"
+)
+REASON_SERVICE_PASSWORD_ENCRYPTION = (
+    "Huawei VRP เข้ารหัสรหัสผ่านที่ตั้งด้วย cipher ให้อัตโนมัติเป็นค่าเริ่มต้นอยู่แล้ว"
+)
+
+# Cisco lines that are redundant on Huawei wherever they appear: at top level and inside
+# any block (also blocks no rule claims, e.g. `line con 0`), so hybrid never sends them to AI.
+CISCO_NOT_NEEDED_ANYWHERE: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^logging\s+synchronous(\s|$)", re.IGNORECASE), REASON_LOGGING_SYNCHRONOUS),
+]
+
+
+def cisco_not_needed_reason(body: str) -> Optional[str]:
+    """Reason when a Cisco line is "ไม่ต้องใช้คำสั่งนี้" wherever it appears, else None."""
+    for pattern, reason in CISCO_NOT_NEEDED_ANYWHERE:
+        if pattern.match(body):
+            return reason
+    return None
 
 _CISCO_COMMENT = re.compile(r"^!+\s*(.*)$")
 _HUAWEI_COMMENT = re.compile(r"^[#!]+\s*(.*)$")  # VRP output also uses "!Software Version ..."
@@ -125,6 +152,10 @@ cisco_system = _system_handler(
         (_regex(r"^end$"), _plain(D)),
         (_regex(r"^exit$"), _not_needed(REASON_TOP_LEVEL_EXIT)),
         (_regex(r"^no\s+ip\s+domain[-\s]lookup$"), _not_needed(REASON_DOMAIN_LOOKUP)),
+        (_regex(r"^enable$"), _not_needed(REASON_ENABLE)),
+        (_regex(r"^service\s+password-encryption$"), _not_needed(REASON_SERVICE_PASSWORD_ENCRYPTION)),
+        (lambda body: cisco_not_needed_reason(body) is not None,
+         lambda ctx, line: ctx.not_needed(line, cisco_not_needed_reason(line.body), ctx.ir.notes)),
         (_regex(r"^(wr(ite)?(\s+mem(ory)?)?|copy\s+run(ning-config)?\s+start(up-config)?)$"), _mark("save", T)),
     ],
 )

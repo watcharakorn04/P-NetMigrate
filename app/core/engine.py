@@ -25,6 +25,7 @@ from app.core.ir import ConversionMode, DeviceConfigIR, Provenance, RenderedLine
 from app.core.parsers import ParseResult, parse_config
 from app.core.renderers import render_config
 from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
+from app.core.rules.tier1_system import is_huawei_system_view
 from app.core.secret_stripper import SanitizedResult, contains_secret, strip_secrets
 from app.services import ai_translator as _ai
 from app.services.ai_translator import AIError, AIItem, Translator
@@ -362,6 +363,31 @@ def _apply_ai(
     return out, translated
 
 
+def _strip_partial_navigation(
+    answers: dict[int, list[str]], rendered: list[RenderedLine], target: Vendor
+) -> dict[int, list[str]]:
+    """Defence in depth for partial AI answers (hybrid / user-selected) merged into a Huawei
+    rule result: a standalone `system-view` is dropped when the output already enters the
+    system view, and a standalone `return` when the output already closes with its own
+    `return` (a mid-file `return` would leave system view). Answers left empty are dropped,
+    so their lines keep the "แปลงไม่ได้" label."""
+    if target is not Vendor.HUAWEI_VRP:
+        return answers
+    commands = [l.text.strip() for l in rendered if not l.is_comment and l.provenance is not Provenance.AI]
+    has_system_view = any(is_huawei_system_view(c) for c in commands)
+    has_return = "return" in commands
+    out: dict[int, list[str]] = {}
+    for item_id, lines in answers.items():
+        kept = [
+            l for l in lines
+            if not (has_system_view and is_huawei_system_view(l.strip()))
+            and not ((has_system_view or has_return) and l.strip().lower() == "return")
+        ]
+        if kept:
+            out[item_id] = kept
+    return out
+
+
 def _run_jobs(result: ConversionResult, jobs: list[_Job], translator: Translator) -> ConversionResult:
     """Send jobs to AI and merge. On AIError the rule-only result is returned with a notice."""
     result.ai_sent_line_numbers = sorted(n for j in jobs for n in j.line_numbers)
@@ -371,6 +397,7 @@ def _run_jobs(result: ConversionResult, jobs: list[_Job], translator: Translator
         result.effective_mode = ConversionMode.RULE_ONLY
         result.notices += [NOTICE_AI_FAILED, ai_failure_notice(exc)]
         return result
+    answers = _strip_partial_navigation(answers, result.lines, result.target_vendor)
     result.lines, translated = _apply_ai(result.lines, jobs, answers, result.target_vendor)
     result.unconverted_items = [i for i in result.unconverted_items if i.line_no not in translated]
     if translated:

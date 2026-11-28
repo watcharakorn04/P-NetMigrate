@@ -8,7 +8,7 @@ If anything here conflicts with that file, the proposal wins. Do not expand scop
 Network Configuration Conversion System for Multi-Vendor Migration.
 Bidirectional translation **Cisco IOS-XE ⇄ Huawei VRP**, **IPv4 only**. No other vendor pair.
 
-**Status: feature-complete.** Milestones 1–5 are done and **705 `pytest` tests pass**.
+**Status: feature-complete.** Milestones 1–5 are done and **729 `pytest` tests pass**.
 
 | Milestone | Delivered |
 |---|---|
@@ -58,7 +58,7 @@ raw text ─► strip_secrets ─► Parser (per vendor) ─► IR (vendor-agnos
 
 | Tier | File(s) | Coverage |
 |---|---|---|
-| 1 | `tier1_system.py`, `tier1_vlan.py`, `tier1_interface.py`, `tier1_routing.py`, `interface_names.py` | hostname/domain/NTP target/syslog target/file assembly (`configure terminal`⇄`system-view` rendered first, `end`⇄`return`, `write memory`/`copy run start`⇄`save force` after it, `no ip domain-lookup` → not needed); view exits `exit`⇄`quit` (one per nested Huawei view); VLAN & port (access/trunk/STP edge); interfaces incl. `interface range`⇄`port-group group-member` (numbers verbatim); static routes; OSPFv2 |
+| 1 | `tier1_system.py`, `tier1_vlan.py`, `tier1_interface.py`, `tier1_routing.py`, `interface_names.py` | hostname/domain/NTP target/syslog target/file assembly (`configure terminal`⇄`system-view` rendered first, `end`⇄`return`, `write memory`/`copy run start`⇄`save force` after it, `no ip domain-lookup`, bare `enable`, `service password-encryption` and `logging synchronous` (anywhere, incl. inside `line con`/`line vty`) → not needed); view exits `exit`⇄`quit` (one per nested Huawei view); VLAN & port (access/trunk/STP edge); interfaces incl. `interface range`⇄`port-group group-member` (numbers verbatim); static routes; OSPFv2 |
 | 2 | `tier2_services.py` | RIP, redistribute, default route, NTP, syslog, VTY/SSH (no user-account commands) |
 | 3 | `tier3_bgp_acl.py` | BGP, ACL, with behavioural tests (silent-failure risk) |
 
@@ -268,7 +268,7 @@ tests/
   test_secret_stripper.py  test_prescan.py  test_tier1_rules.py  test_tier2_rules.py
   test_tier3_rules.py  test_ai_hybrid.py  test_batch.py  test_deploy.py  test_history.py
   test_inventory_hardware.py  test_topology_settings.py  test_web_ui.py  test_ui_samples.py
-  test_ai_translator.py  test_huawei_accuracy.py
+  test_ai_translator.py  test_huawei_accuracy.py  test_hybrid_verification.py
 ```
 
 Static URLs carry `?v={{ asset_v }}`. Bump `web.ASSET_VERSION` on any UI/JS change.

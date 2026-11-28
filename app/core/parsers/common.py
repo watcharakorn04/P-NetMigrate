@@ -24,7 +24,7 @@ from app.core.rules.base import (
     out_of_scope_feature,
     reason_out_of_scope,
 )
-from app.core.rules.tier1_system import comment_body
+from app.core.rules.tier1_system import cisco_not_needed_reason, comment_body
 from app.core.secret_stripper import contains_secret
 
 # Either raw text, or (original_line_no, text) pairs left after strip_secrets.
@@ -91,6 +91,26 @@ def _attach_trailing_exits(roots: list[Block], vendor: Vendor) -> list[Block]:
     return out
 
 
+def _relabel_not_needed_children(root: Block, ctx: ParseContext) -> None:
+    """Cisco sub-commands that are redundant on Huawei wherever they appear (e.g.
+    `logging synchronous` under `line con 0`, a block no rule claims): a line left
+    "แปลงไม่ได้" only because no rule knew it becomes "ไม่ต้องใช้คำสั่งนี้", so hybrid never
+    sends it to AI. Claimed blocks handle these lines with their own child rules."""
+    if ctx.vendor is not Vendor.CISCO_IOS_XE:
+        return
+    for line in root.lines():
+        if line is root.header:
+            continue
+        status = ctx.status.get(line.no)
+        if status is None or status.kind is not LineKind.UNCONVERTED or status.reason != REASON_NO_RULE:
+            continue
+        reason = cisco_not_needed_reason(line.body)
+        if reason is None:
+            continue
+        ctx.ir.notes = [n for n in ctx.ir.notes if n.source_line != line.no]
+        ctx.not_needed(line, reason, ctx.ir.notes)
+
+
 def parse(source: Source, vendor: Vendor, handlers: list[BlockHandler]) -> ParseResult:
     ctx = ParseContext(vendor)
     roots = _build_tree(source, ctx)
@@ -117,6 +137,8 @@ def parse(source: Source, vendor: Vendor, handlers: list[BlockHandler]) -> Parse
         for line in root.lines():
             if line.no not in ctx.status:
                 ctx.unconverted(line, REASON_NO_RULE, ctx.ir.notes)
+        if claimed is None:
+            _relabel_not_needed_children(root, ctx)
         claimed_by[root.header.no] = claimed
 
     for finalize in ctx.finalizers:

@@ -23,6 +23,7 @@ VTY / SSH (D):
   line vty <a> [<b>]            <-> user-interface vty <a> <b>
    login local                  <-> authentication-mode aaa
    transport input ssh|telnet|ssh telnet|all <-> protocol inbound ssh|telnet|all
+   logging synchronous           -> "ไม่ต้องใช้คำสั่งนี้" (VRP default; see tier1_system)
   Huawei needs `stelnet server enable` for SSH: the renderer writes it as a comment advisory
   ("# แนะนำให้เปิดใช้งาน SSH Server ...") — never as a command, because the Huawei BGP
   activation block is the only command the system may auto-generate (proposal §2.3.2 item 5).
@@ -37,6 +38,7 @@ from typing import Optional
 
 from app.core.ir import BgpIR, OspfIR, RedistributeIR, RipIR, ServerIR, SyntaxCategory, Vendor, VtyIR
 from app.core.rules import interface_names
+from app.core.rules.tier1_system import CISCO_NOT_NEEDED_ANYWHERE
 from app.core.rules.base import (
     CISCO_EXIT_RULES,
     HUAWEI_EXIT_RULES,
@@ -48,6 +50,7 @@ from app.core.rules.base import (
     ChildRule,
     ParseContext,
     apply_child_rules,
+    not_needed_rule,
     classful_prefix_len,
     compile_rules,
     parse_ipv4,
@@ -353,7 +356,7 @@ _CISCO_VTY_RULES = compile_rules(
         (r"^transport\s+input\s+(.+)$", _vty_transport),
         (r"^access-class\s+\S+\s+(in|out)\b", unsupported_rule(FEATURE_VTY_ACL)),
     ]
-) + CISCO_EXIT_RULES
+) + [(pattern, not_needed_rule(reason)) for pattern, reason in CISCO_NOT_NEEDED_ANYWHERE] + CISCO_EXIT_RULES
 
 _HUAWEI_VTY_RULES = compile_rules(
     [
