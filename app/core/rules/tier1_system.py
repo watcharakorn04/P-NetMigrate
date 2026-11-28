@@ -9,7 +9,10 @@
                                               a child rule (base.view_exit): exit <-> quit
   write [memory] / copy run start         <-> save force / save       (T, rendered after
                                               end/return, with a warning)
+  snmp-server location <text>             <-> snmp-agent sys-info location <text>   (D)
   no ip domain-lookup                      -> "ไม่ต้องใช้คำสั่งนี้" (Huawei default)
+  ip routing                               -> "ไม่ต้องใช้คำสั่งนี้" (VRP L3 switches route
+                                              IPv4 by default; there is no `ip routing`)
   enable (bare, not enable secret/password) -> "ไม่ต้องใช้คำสั่งนี้" (no separate exec modes)
   service password-encryption              -> "ไม่ต้องใช้คำสั่งนี้" (cipher encrypts by default)
   logging synchronous (top level or inside  -> "ไม่ต้องใช้คำสั่งนี้" (VRP does not interrupt
@@ -45,6 +48,9 @@ D, T = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM
 
 REASON_DOMAIN_LOOKUP = (
     "Huawei VRP ไม่เปิดการแปลงชื่อผ่าน DNS (domain lookup) เป็นค่าเริ่มต้นอยู่แล้ว จึงไม่ต้องสั่งปิด"
+)
+REASON_IP_ROUTING = (
+    "Huawei VRP (สวิตช์ Layer 3) เปิดการ route IPv4 เป็นค่าเริ่มต้นอยู่แล้ว และไม่มีคำสั่ง ip routing"
 )
 REASON_TOP_LEVEL_EXIT = "ไฟล์ผลลัพธ์ปิดท้ายด้วยคำสั่งออกจากโหมดตั้งค่า (end/return) ให้อยู่แล้ว"
 REASON_LOGGING_SYNCHRONOUS = (
@@ -108,7 +114,7 @@ def _regex(pattern: str) -> Callable[[str], bool]:
 
 
 def _capture(pattern: str, field: str) -> _LineRule:
-    """hostname / domain: store the single argument on the IR."""
+    """hostname / domain / SNMP location: store the single argument on the IR."""
     compiled = re.compile(pattern, re.IGNORECASE)
 
     def action(ctx: ParseContext, line: Line) -> SyntaxCategory:
@@ -161,6 +167,8 @@ cisco_system = _system_handler(
     [
         _capture(r"^hostname\s+(\S+)$", "hostname"),
         _capture(r"^ip\s+domain[-\s]name\s+(\S+)$", "domain_name"),
+        _capture(r"^snmp-server\s+location\s+(\S.*)$", "snmp_location"),
+        (_regex(r"^ip\s+routing$"), _not_needed(REASON_IP_ROUTING)),
         (is_cisco_configure_terminal, _mark("config_mode", D)),
         (_regex(r"^end$"), _plain(D)),
         (_regex(r"^exit$"), _not_needed(REASON_TOP_LEVEL_EXIT)),
@@ -177,6 +185,7 @@ huawei_system = _system_handler(
     [
         _capture(r"^sysname\s+(\S+)$", "hostname"),
         _capture(r"^dns\s+domain\s+(\S+)$", "domain_name"),
+        _capture(r"^snmp-agent\s+sys-info\s+location\s+(\S.*)$", "snmp_location"),
         (is_huawei_system_view, _mark("config_mode", D)),
         (_regex(r"^return$"), _plain(D)),
         (_regex(r"^quit$"), _not_needed(REASON_TOP_LEVEL_EXIT)),

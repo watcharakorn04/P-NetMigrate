@@ -25,7 +25,13 @@ from app.core.ir import ConversionMode, DeviceConfigIR, Provenance, RenderedLine
 from app.core.parsers import ParseResult, parse_config
 from app.core.renderers import render_config
 from app.core.renderers.common import WARN_TWO_TUPLE_PORTS
-from app.core.renderers.huawei_vrp import order_eth_trunk, order_global_dhcp_snooping
+from app.core.renderers.huawei_vrp import (
+    dedupe_ospf_router_id,
+    guard_eth_trunk_members,
+    order_eth_trunk,
+    order_global_dhcp_snooping,
+    order_undo_portswitch,
+)
 from app.core.rules.interface_names import is_virtual
 from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
 from app.core.rules.tier1_system import is_huawei_system_view
@@ -534,7 +540,9 @@ def _convert_selected(
 def _finalize(result: ConversionResult) -> ConversionResult:
     """Final assembly checks that hold for every mode (rule, hybrid, ai_only, user-selected)."""
     if result.target_vendor is Vendor.HUAWEI_VRP:
-        result.lines = order_eth_trunk(order_global_dhcp_snooping(result.lines))
+        lines = order_eth_trunk(order_global_dhcp_snooping(result.lines))
+        lines = guard_eth_trunk_members(dedupe_ospf_router_id(order_undo_portswitch(lines)))
+        result.lines = lines
     return result
 
 

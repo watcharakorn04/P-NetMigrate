@@ -73,6 +73,7 @@ from app.core.rules.base import (
     ParseContext,
     apply_child_rules,
     apply_line_rules,
+    auto_ai_eligible,
     classful_prefix_len,
     compile_rules,
     not_needed_rule,
@@ -581,6 +582,12 @@ def _get_acl(ctx: ParseContext, kind: str, ordinal: Optional[int], name: Optiona
     return acl
 
 
+def _track_block(ctx: ParseContext, acl: AclIR, block: Block) -> None:
+    """Remember every source line of the ACL block(s), so a rejected ACL can lock all of them."""
+    lines: dict = ctx.data.setdefault("acl_block_lines", {})
+    lines.setdefault(acl.key, set()).update(l.no for l in block.lines())
+
+
 def _mark_partial(ctx: ParseContext, acl: AclIR) -> None:
     ctx.data.setdefault("acl_partial", set()).add(acl.key)
 
@@ -612,9 +619,21 @@ def _finalize_acls(ctx: ParseContext) -> None:
         if acl.key not in partial:
             continue
         lines = set(acl.source_lines) | {e.source_line for e in acl.entries}
+        lines |= ctx.data.get("acl_block_lines", {}).get(acl.key, set())
         for no in sorted(lines):
-            if ctx.status[no].kind is LineKind.RULE:
+            status = ctx.status.get(no)
+            if status is None:
+                continue
+            if status.kind is LineKind.RULE:
                 ctx.demote(no, REASON_ACL_PARTIAL, ctx.ir.notes)
+            elif status.kind is LineKind.UNCONVERTED and auto_ai_eligible(status.reason):
+                # Block-skip boundary: the failing entry itself (e.g. `deny ip any any log`) and
+                # every other line of a rejected ACL are locked too, so hybrid never sends a
+                # fragment of the ACL to AI (a stray `rule deny ...` would land in system-view).
+                status.reason = f"{REASON_ACL_PARTIAL} ({status.reason})"
+                for note in acl.notes:
+                    if note.source_line == no:
+                        note.reason = status.reason
         ctx.ir.notes.extend(acl.notes)
         ctx.ir.acls.remove(acl)
         dropped.add(acl.key)
@@ -651,6 +670,7 @@ def cisco_acl_numbered(block: Block, ctx: ParseContext) -> bool:
     if acl is None:
         ctx.unconverted_block(block, REASON_ACL_KIND_CONFLICT, ctx.ir.notes)
         return True
+    _track_block(ctx, acl, block)
     ctx.unconverted_children(block, REASON_NO_RULE, acl.notes)
     if _REMARK.match(m[2]):
         ctx.unconverted(line, REASON_ACL_REMARK, acl.notes)
@@ -675,6 +695,7 @@ def cisco_acl_named(block: Block, ctx: ParseContext) -> bool:
     if acl is None:
         ctx.unconverted_block(block, REASON_ACL_KIND_CONFLICT, ctx.ir.notes)
         return True
+    _track_block(ctx, acl, block)
     ctx.rule(block.header, T)
     for child in block.children:
         body = child.header.body
@@ -765,6 +786,7 @@ def huawei_acl(block: Block, ctx: ParseContext) -> bool:
     if acl is None:
         ctx.unconverted_block(block, REASON_ACL_KIND_CONFLICT, ctx.ir.notes)
         return True
+    _track_block(ctx, acl, block)
     _huawei_acl_body(block, ctx, acl)
     return True
 

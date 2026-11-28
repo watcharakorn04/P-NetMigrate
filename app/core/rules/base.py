@@ -77,7 +77,8 @@ _OUT_OF_SCOPE: list[tuple[re.Pattern[str], str]] = [
 
 # Lines whose argument is free text (a description may legitimately say "vrf-core").
 _FREE_TEXT = re.compile(
-    r"^((description|name|hostname|sysname)\b|(neighbor|peer)\s+\S+\s+description\b"
+    r"^((description|name|hostname|sysname)\b|snmp-server\s+location\b|snmp-agent\s+sys-info\s+location\b"
+    r"|(neighbor|peer)\s+\S+\s+description\b"
     r"|(access-list\s+\d+\s+)?remark\b)",
     re.IGNORECASE,
 )

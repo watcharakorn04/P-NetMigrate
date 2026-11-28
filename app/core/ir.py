@@ -141,6 +141,9 @@ class InterfaceIR(BaseModel):
     ipv4: Optional[IPv4Interface] = None
     shutdown: Optional[bool] = None  # None = not stated in source (do not guess)
     is_virtual: bool = False  # Loopback / Vlanif / Eth-Trunk — number is a name
+    # Routed (Layer 3) port: Cisco `no switchport` <-> Huawei `undo portswitch`. Always the
+    # FIRST command of the interface view (VRP rejects L3 commands on a switchport).
+    routed: Optional[bool] = None
     # L2 switchport
     port_mode: Optional[str] = None  # "access" | "trunk" | None (not stated)
     access_vlan: Optional[int] = None
@@ -456,6 +459,9 @@ class DeviceConfigIR(BaseModel):
     source_vendor: Vendor
     hostname: Optional[str] = None
     domain_name: Optional[str] = None
+    # SNMP system location (free text): Cisco `snmp-server location <text>` <->
+    # Huawei `snmp-agent sys-info location <text>`. Never credential-bearing.
+    snmp_location: Optional[str] = None
     vlans: list[VlanIR] = Field(default_factory=list)  # kept sorted by vlan_id
     interfaces: list[InterfaceIR] = Field(default_factory=list)
     ospf: Optional[OspfIR] = None

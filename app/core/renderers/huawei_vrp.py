@@ -80,6 +80,8 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
     name = display_name(iface.ref, H)
     fl = iface.field_lines
     w.cmd(interface_header(iface, H), D, iface.source_lines[0], interface_warnings(iface, name))
+    if iface.routed:  # always first: VRP rejects L3 commands until the port leaves switch mode
+        w.cmd(" undo portswitch", D, fl.get("routed"))
     if iface.description:
         w.cmd(f" description {iface.description}", D, fl.get("description"))
     if iface.lacp_static:
@@ -322,6 +324,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"sysname {ir.hostname}", D, ir.field_lines.get("hostname"))
     if ir.domain_name:
         w.cmd(f"dns domain {ir.domain_name}", D, ir.field_lines.get("domain_name"))
+    if ir.snmp_location:
+        w.cmd(f"snmp-agent sys-info location {ir.snmp_location}", D, ir.field_lines.get("snmp_location"))
     if ir.clock_timezone:
         tz = ir.clock_timezone
         w.cmd(f"clock timezone {tz.name} {format_huawei_timezone(tz.offset_minutes)}", T, tz.source_line)
@@ -481,6 +485,106 @@ def _block_end(lines: list[RenderedLine], start: int) -> int:
             return j + 1 if text.lower() == "quit" else j
         j += 1
     return j
+
+
+def _view_blocks(lines: list[RenderedLine], header: re.Pattern) -> list[tuple[int, int]]:
+    """(start, end) of every top-level view whose header matches; `end` is exclusive and stops
+    before the next top-level command (a closing `quit` is outside the range)."""
+    out: list[tuple[int, int]] = []
+    marker = H.comment_marker
+    start = None
+    for i, line in enumerate(lines):
+        text = line.text.strip()
+        ends = (line.is_comment and text == marker) or (not line.is_comment and not line.text[:1].isspace())
+        if ends and start is not None:
+            out.append((start, i))
+            start = None
+        if not line.is_comment and not line.text[:1].isspace() and header.match(text):
+            start = i
+    if start is not None:
+        out.append((start, len(lines)))
+    return out
+
+
+def _children(lines: list[RenderedLine], start: int, end: int) -> list[int]:
+    """Indices of the indented commands (not comments) inside a view block."""
+    return [k for k in range(start + 1, end) if not lines[k].is_comment and lines[k].text[:1].isspace()]
+
+
+def _commented(line: RenderedLine, why: str) -> RenderedLine:
+    """Turn a command into a review comment (never deployed), keeping its provenance."""
+    return RenderedLine(
+        text=f"{H.comment_marker} [{line.provenance.value}] {line.text.strip()} -- {why}",
+        provenance=line.provenance,
+        source_line=line.source_line,
+        is_comment=True,
+    )
+
+
+_PORTSWITCH = re.compile(r"^undo\s+portswitch$", re.IGNORECASE)
+
+
+def order_undo_portswitch(lines: list[RenderedLine]) -> list[RenderedLine]:
+    """`undo portswitch` must be the FIRST command of its interface view.
+
+    VRP rejects `ip address`, `ospf network-type p2p`, ... on a switchport until `undo
+    portswitch` has run. The renderer already writes it first; AI output (ai_only, or gap
+    fills merged into an interface) may not, so move it right under the interface header.
+    """
+    lines = list(lines)
+    for start, end in _view_blocks(lines, _IFACE_HEADER):
+        kids = _children(lines, start, end)
+        hit = next((k for k in kids if _PORTSWITCH.match(lines[k].text.strip())), None)
+        if hit is None or hit == start + 1:
+            continue
+        line = lines.pop(hit)
+        lines.insert(start + 1, line)
+    return lines
+
+
+_OSPF_HEADER_RID = re.compile(r"^ospf\s+\d+\s+router-id\s+(\S+)$", re.IGNORECASE)
+_OSPF_CHILD_RID = re.compile(r"^(ospf\s+)?router-id\s+\S+$", re.IGNORECASE)
+WHY_OSPF_RID_DUPLICATE = (
+    "ตัดออก: router-id ซ้ำกับที่กำหนดไว้แล้วในหัว ospf <process> router-id <id> "
+    "(Huawei กำหนด router-id ของ OSPF ที่หัว process เท่านั้น)"
+)
+
+
+def dedupe_ospf_router_id(lines: list[RenderedLine]) -> list[RenderedLine]:
+    """When `ospf <id> router-id <rid>` already sets the router ID, a `router-id` /
+    `ospf router-id` line inside that OSPF view (AI output) is turned into a review comment."""
+    lines = list(lines)
+    for start, end in _view_blocks(lines, re.compile(r"^ospf\b", re.IGNORECASE)):
+        if not _OSPF_HEADER_RID.match(lines[start].text.strip()):
+            continue
+        for k in _children(lines, start, end):
+            if _OSPF_CHILD_RID.match(lines[k].text.strip()):
+                lines[k] = _commented(lines[k], WHY_OSPF_RID_DUPLICATE)
+    return lines
+
+
+_MEMBER_L2 = re.compile(r"^port\s+(link-type|default\s+vlan|trunk\s+(pvid|allow-pass))\b", re.IGNORECASE)
+WHY_MEMBER_L2 = (
+    "ตัดออก: พอร์ตสมาชิกของ Eth-Trunk ห้ามตั้ง port link-type / VLAN / pvid เอง "
+    "ต้องตั้งที่ interface Eth-Trunk เท่านั้น (Huawei ไม่ยอมให้เพิ่มพอร์ตที่มีค่าเหล่านี้เข้า Eth-Trunk)"
+)
+
+
+def guard_eth_trunk_members(lines: list[RenderedLine]) -> list[RenderedLine]:
+    """Inside an interface that binds `eth-trunk <id>`, AI-generated `port link-type ...`,
+    `port trunk pvid|allow-pass ...` and `port default vlan ...` are redundant/rejected (they
+    belong on `interface Eth-Trunk<id>`): turn them into review comments."""
+    lines = list(lines)
+    for start, end in _view_blocks(lines, _IFACE_HEADER):
+        if _ETH_TRUNK_HEADER.match(lines[start].text.strip()):
+            continue
+        kids = _children(lines, start, end)
+        if not any(_ETH_TRUNK_BIND.match(lines[k].text.strip()) for k in kids):
+            continue
+        for k in kids:
+            if lines[k].provenance is Provenance.AI and _MEMBER_L2.match(lines[k].text.strip()):
+                lines[k] = _commented(lines[k], WHY_MEMBER_L2)
+    return lines
 
 
 def order_eth_trunk(lines: list[RenderedLine]) -> list[RenderedLine]:

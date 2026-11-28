@@ -122,6 +122,8 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR, obj
     name = display_name(iface.ref, C)
     fl = iface.field_lines
     w.cmd(interface_header(iface, C), D, iface.source_lines[0], interface_warnings(iface, name))
+    if iface.routed:
+        w.cmd(" no switchport", D, fl.get("routed"))
     if iface.description:
         w.cmd(f" description {iface.description}", D, fl.get("description"))
     if iface.channel_group is not None:
@@ -290,6 +292,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"hostname {ir.hostname}", D, ir.field_lines.get("hostname"))
     if ir.domain_name:
         w.cmd(f"ip domain name {ir.domain_name}", D, ir.field_lines.get("domain_name"))
+    if ir.snmp_location:
+        w.cmd(f"snmp-server location {ir.snmp_location}", D, ir.field_lines.get("snmp_location"))
     if ir.clock_timezone:
         tz = ir.clock_timezone
         w.cmd(f"clock timezone {tz.name} {format_cisco_timezone(tz.offset_minutes)}", T, tz.source_line)

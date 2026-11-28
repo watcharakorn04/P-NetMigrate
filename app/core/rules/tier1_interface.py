@@ -7,6 +7,8 @@
   shutdown / no shutdown        <-> shutdown / undo shutdown        (D; unset if omitted)
   encapsulation ppp|hdlc        <-> link-protocol ppp|hdlc          (D; renderer warns on HDLC)
   no ip address                  -> "ไม่ต้องใช้คำสั่งนี้" (target default is no address)
+  no switchport                 <-> undo portswitch                 (D; always the first line
+                                                                     of the interface view)
   exit                          <-> quit                            (D, view exit; base.view_exit)
   interface range Gi0/1 - 4     <-> port-group group-member GigabitEthernet0/1 to GigabitEthernet0/4
                                                                     (T; numbers verbatim)
@@ -20,6 +22,10 @@ Link aggregation (S):
   A member without an `interface Port-channel<id>` block in the source still yields
   `interface Eth-Trunk<id>` (translation of the channel-group line, like Cisco's implicit
   creation); the Huawei renderer always writes Eth-Trunk<id> before its members.
+  L2 port settings on a member (`switchport mode/access vlan/trunk allowed vlan/trunk native
+  vlan`) belong on `interface Eth-Trunk<id>`: VRP rejects `eth-trunk <id>` on a port with
+  non-default L2 config. They are "ไม่ต้องใช้คำสั่งนี้" when the Eth-Trunk carries the same
+  value, otherwise "แปลงไม่ได้" (intentional, never auto-sent to AI) — never rendered on the member.
 
 First-hop redundancy (HSRP -> VRRP, with a protocol-change warning in the renderer):
   standby <g> ip <ip>                 <-> vrrp vrid <g> virtual-ip <ip>
@@ -54,8 +60,10 @@ from app.core.rules.base import (
     BlockHandler,
     ChildRule,
     Line,
+    LineKind,
     ParseContext,
     apply_child_rules,
+    auto_ai_eligible,
     compile_rules,
     parse_ipv4,
     reason_intentional,
@@ -82,6 +90,14 @@ REASON_CHANNEL_MODE_CONFLICT = (
     "Eth-Trunk ของ Huawei มีได้โหมดเดียว กรุณาตรวจสอบต้นทาง"
 )
 REASON_CHANNEL_ON_VIRTUAL = "channel-group / eth-trunk ใช้ได้เฉพาะพอร์ตจริงเท่านั้น"
+REASON_MEMBER_L2_REDUNDANT = (
+    "ค่า Layer 2 นี้ตั้งไว้ที่ interface Eth-Trunk อยู่แล้ว — พอร์ตสมาชิกรับค่าจาก Eth-Trunk "
+    "(Huawei ไม่ยอมให้เพิ่มพอร์ตที่มีค่า port link-type / VLAN เข้า Eth-Trunk)"
+)
+REASON_MEMBER_L2_ON_TRUNK = reason_intentional(
+    "ค่า Layer 2 (port link-type / VLAN / pvid) ของพอร์ตสมาชิกต้องตั้งที่ interface Eth-Trunk "
+    "เท่านั้น — Huawei ไม่ยอมให้เพิ่มพอร์ตที่มีค่าเหล่านี้เข้า Eth-Trunk กรุณาตั้งค่าที่ interface Eth-Trunk"
+)
 REASON_LACP_NOT_TRUNK = "mode lacp-static ใช้ได้เฉพาะใน interface Eth-Trunk"
 FEATURE_PAGP = "EtherChannel แบบ PAgP หรือ LACP passive (รองรับเฉพาะ mode active และ mode on)"
 REASON_VRRP_PREEMPT = "VRRP ของ Huawei ทำ preempt เป็นค่าเริ่มต้นอยู่แล้ว"
@@ -135,6 +151,10 @@ def _link_protocol(m, line, ctx, iface):
     _set(iface, "link_protocol", m[1].lower(), line, ctx)
 
 
+def _routed(m, line, ctx, iface):
+    _set(iface, "routed", True, line, ctx)
+
+
 def _no_ip(m, line, ctx, iface):
     ctx.not_needed(line, REASON_NO_IP, iface.notes)
 
@@ -153,6 +173,7 @@ _CISCO_BASE = compile_rules(
         (r"^description\s+(.+)$", _description),
         (r"^ip\s+address\s+(\S+)\s+(\S+)$", _ip_address(False)),
         (r"^no\s+ip\s+address$", _no_ip),
+        (r"^no\s+switchport$", _routed),
         (r"^shutdown$", _shutdown(True)),
         (r"^no\s+shutdown$", _shutdown(False)),
         (r"^encapsulation\s+(ppp|hdlc)$", _link_protocol),
@@ -167,6 +188,7 @@ _HUAWEI_BASE = compile_rules(
         (r"^ip\s+address\s+(\S+)\s+(\S+)$", _ip_address(True)),
         (r"^shutdown$", _shutdown(True)),
         (r"^undo\s+shutdown$", _shutdown(False)),
+        (r"^undo\s+portswitch$", _routed),
         (r"^link-protocol\s+(ppp|hdlc)$", _link_protocol),
         (r"^(link-protocol\s+fr|fr)\b", _unsupported("Frame Relay")),
         (r"^(virtualbaudrate|baudrate)\b", _unsupported("Clock Rate")),
@@ -206,6 +228,50 @@ def _bind_member(iface: InterfaceIR, group: int, lacp: Optional[bool], line: Lin
     iface.channel_group = group
     iface.field_lines["channel_group"] = line.no
     ctx.rule(line, S)
+    ctx.add_finalizer(_finalize_member_l2)
+
+
+_MEMBER_L2_ATTRS = ("port_mode", "access_vlan", "trunk_allowed_vlans")
+# Member lines no rule converted that are still L2 port settings (e.g. trunk native vlan / pvid).
+_MEMBER_L2_LINE = re.compile(
+    r"^(switchport(\s|$)|port\s+(link-type|default\s+vlan|trunk\b|hybrid\b))", re.IGNORECASE
+)
+
+
+def _finalize_member_l2(ctx: ParseContext) -> None:
+    """Keep L2 port settings off Eth-Trunk / Port-channel members (see module docstring)."""
+    if ctx.vendor is not Vendor.CISCO_IOS_XE:
+        return
+    for iface in ctx.ir.interfaces:
+        if iface.channel_group is None:
+            continue
+        trunk = next((t for t in ctx.ir.interfaces if t.if_type == "eth-trunk" and t.range_end is None
+                      and t.number == str(iface.channel_group)), None)
+        touched = False
+        for attr in _MEMBER_L2_ATTRS:
+            no = iface.field_lines.get(attr)
+            if getattr(iface, attr) is None or no is None:
+                continue
+            same = trunk is not None and getattr(trunk, attr) == getattr(iface, attr)
+            setattr(iface, attr, None)
+            iface.field_lines.pop(attr)
+            if same:
+                status = ctx.status[no]
+                ctx.not_needed(Line(no=no, indent=1, body=status.body), REASON_MEMBER_L2_REDUNDANT, iface.notes)
+            else:
+                ctx.demote(no, REASON_MEMBER_L2_ON_TRUNK, iface.notes)
+            touched = True
+        for no in sorted({n.source_line for n in iface.notes}):
+            status = ctx.status.get(no)
+            if (status is not None and status.kind is LineKind.UNCONVERTED and auto_ai_eligible(status.reason)
+                    and _MEMBER_L2_LINE.match(status.body)):
+                status.reason = REASON_MEMBER_L2_ON_TRUNK
+                for note in iface.notes:
+                    if note.source_line == no:
+                        note.reason = status.reason
+                touched = True
+        if touched:
+            iface.notes.sort(key=lambda n: n.source_line)
 
 
 def _cisco_channel_group(m, line, ctx, iface):
