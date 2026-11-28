@@ -179,6 +179,17 @@ _TARGET_EXTRA_RULES = {
         "- Global STP: 'spanning-tree mode rapid-pvst' -> 'stp mode rstp'; "
         "'spanning-tree portfast default' -> 'stp edged-port default' (both in system view).\n"
         "- Close every 'vlan <id>' block with 'quit'.\n"
+        "- Inside a 'vlan <id>' block ALWAYS use 'description <NAME>' for the VLAN name; "
+        "NEVER emit Cisco's 'name <NAME>'.\n"
+        "- Translate a non-zero 'exec-timeout <min> <sec>' (e.g. 'exec-timeout 10 0') strictly to "
+        "'idle-timeout <min> <sec>'. Use 'undo idle-timeout' ONLY for 'exec-timeout 0 0', never for a "
+        "non-zero value.\n"
+        "- Translate 'switchport port-security violation {protect|restrict|shutdown}' strictly to "
+        "'port-security protect-action {protect|restrict|shutdown}' (NEVER 'port-security trap ...').\n"
+        "- Translate 'ip domain-name <domain>' strictly to 'dns domain <domain>' "
+        "(NEVER emit a duplicate 'sysname' for it).\n"
+        "- No auto-filling: NEVER invent or auto-add 'stelnet server enable' unless that exact command "
+        "is explicitly present in the source.\n"
     ),
     Vendor.CISCO_IOS_XE: "",
 }

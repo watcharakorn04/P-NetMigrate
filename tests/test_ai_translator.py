@@ -131,8 +131,27 @@ class TestSystemPromptConstraints:
         assert "Emit 'stp bpdu-protection' ONLY at global system-view level" in prompt
         assert "never invent non-existent ones such as 'stp sock-type'" in prompt
 
+    def test_huawei_basic_vrp_syntax_is_strict(self):
+        prompt = _system_prompt(C, H)
+        assert "Inside a 'vlan <id>' block ALWAYS use 'description <NAME>'" in prompt
+        assert "NEVER emit Cisco's 'name <NAME>'" in prompt
+        assert ("non-zero 'exec-timeout <min> <sec>' (e.g. 'exec-timeout 10 0') strictly to "
+                "'idle-timeout <min> <sec>'") in prompt
+        assert "Use 'undo idle-timeout' ONLY for 'exec-timeout 0 0'" in prompt
+        assert ("'switchport port-security violation {protect|restrict|shutdown}' strictly to "
+                "'port-security protect-action {protect|restrict|shutdown}'") in prompt
+        assert "(NEVER 'port-security trap ...')" in prompt
+        assert "'ip domain-name <domain>' strictly to 'dns domain <domain>'" in prompt
+        assert "NEVER emit a duplicate 'sysname'" in prompt
+        assert ("NEVER invent or auto-add 'stelnet server enable' unless that exact command "
+                "is explicitly present in the source") in prompt
+
     def test_cisco_target_has_no_huawei_constraints(self):
         prompt = _system_prompt(H, C)
+        assert "idle-timeout" not in prompt
+        assert "protect-action" not in prompt
+        assert "dns domain" not in prompt
+        assert "stelnet server enable" not in prompt
         assert "authentication-mode password" not in prompt
         assert "undo ip domain lookup" not in prompt
         assert "very first output line" not in prompt

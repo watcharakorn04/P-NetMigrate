@@ -8,7 +8,7 @@ If anything here conflicts with that file, the proposal wins. Do not expand scop
 Network Configuration Conversion System for Multi-Vendor Migration.
 Bidirectional translation **Cisco IOS-XE ⇄ Huawei VRP**, **IPv4 only**. No other vendor pair.
 
-**Status: feature-complete.** Milestones 1–5 are done and **863 `pytest` tests pass**.
+**Status: feature-complete.** Milestones 1–5 are done and **864 `pytest` tests pass**.
 
 | Milestone | Delivered |
 |---|---|
