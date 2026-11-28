@@ -24,9 +24,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from app.core.ir import InterfaceIR, Vendor
+from app.core.ir import InterfaceIR, InterfaceRef, Vendor
 from app.core.parsers import parse_config
-from app.core.rules.interface_names import IF_TYPES, display_name
+from app.core.rules.interface_names import IF_TYPES, display_name, range_numbers
 
 
 @dataclass(frozen=True)
@@ -133,11 +133,17 @@ def port_state(iface: InterfaceIR) -> PortState:
 def classify_ports(config: str, vendor: Vendor) -> list[dict]:
     """Physical ports of a configuration with their 8.2 state (virtual interfaces skipped)."""
     ir = parse_config(config, vendor).ir
-    return [
-        {"name": display_name(i.ref, vendor), "if_type": i.if_type, "number": i.number, "state": port_state(i).value}
-        for i in ir.interfaces
-        if not i.is_virtual
-    ]
+    ports = []
+    for i in ir.interfaces:
+        if i.is_virtual:
+            continue
+        # A port range (interface range / port-group) counts every member port.
+        numbers = (range_numbers(i.number, i.range_end) if i.range_end else None) or [i.number]
+        state = port_state(i).value
+        for number in numbers:
+            ref = InterfaceRef(if_type=i.if_type, number=number)
+            ports.append({"name": display_name(ref, vendor), "if_type": i.if_type, "number": number, "state": state})
+    return ports
 
 
 def check_compatibility(config: str, vendor: Vendor, model_key: str) -> dict:

@@ -19,6 +19,8 @@ from typing import Optional
 
 from app.core.ir import InterfaceIR, SyntaxCategory, VlanIR
 from app.core.rules.base import (
+    CISCO_EXIT_RULES,
+    HUAWEI_EXIT_RULES,
     REASON_NO_RULE,
     Block,
     BlockHandler,
@@ -137,10 +139,10 @@ def _set_vlan_name(m: re.Match, line: Line, ctx: ParseContext, vlan: VlanIR) -> 
 
 
 _CISCO_VLAN = re.compile(r"^vlan\s+([\d,\-\s]+)$", re.IGNORECASE)
-_CISCO_VLAN_CHILD = compile_rules([(r"^name\s+(.+)$", _set_vlan_name)])
+_CISCO_VLAN_CHILD = compile_rules([(r"^name\s+(.+)$", _set_vlan_name)]) + CISCO_EXIT_RULES
 _HUAWEI_VLAN = re.compile(r"^vlan\s+(\d+)$", re.IGNORECASE)
 _HUAWEI_VLAN_BATCH = re.compile(r"^vlan\s+batch\s+(.+)$", re.IGNORECASE)
-_HUAWEI_VLAN_CHILD = compile_rules([(r"^(description|name)\s+(.+)$", _set_vlan_name)])
+_HUAWEI_VLAN_CHILD = compile_rules([(r"^(description|name)\s+(.+)$", _set_vlan_name)]) + HUAWEI_EXIT_RULES
 
 
 def cisco_vlan(block: Block, ctx: ParseContext) -> bool:

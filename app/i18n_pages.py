@@ -107,7 +107,7 @@ UI_PAGES: dict[str, dict[str, str]] = {
     "dep_reason_unconverted": {"th": "แปลงไม่ได้", "en": "Unconverted"},
     "dep_reason_credential": {"th": "รหัสผ่าน/บัญชีผู้ใช้", "en": "Credential / user"},
     "dep_reason_not_needed": {"th": "ไม่ต้องใช้คำสั่งนี้", "en": "Not needed"},
-    "dep_reason_terminator": {"th": "คำสั่งจบ (end/return)", "en": "Terminator (end/return)"},
+    "dep_reason_terminator": {"th": "คำสั่งเข้า/ออกโหมดหรือบันทึก (ระบบจัดการเอง)", "en": "Mode/save command (handled automatically)"},
     "dep_secret_hidden": {"th": "(ซ่อนข้อมูลลับ)", "en": "(secret hidden)"},
     "dep_ack_ai": {
         "th": "ฉันรับทราบว่าบรรทัดที่มาจาก AI ถูกตัดออกจากการส่ง และต้องตรวจสอบ/ตั้งค่าส่วนนั้นเองก่อนใช้งาน",

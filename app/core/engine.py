@@ -26,6 +26,7 @@ from app.core.parsers import ParseResult, parse_config
 from app.core.renderers import render_config
 from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
 from app.core.secret_stripper import SanitizedResult, contains_secret, strip_secrets
+from app.services import ai_translator as _ai
 from app.services.ai_translator import AIError, AIItem, Translator
 from app.services.mode_selector import resolve_mode
 
@@ -37,6 +38,29 @@ NOTICE_AI_FAILED = (
     "เรียกใช้บริการ AI ไม่สำเร็จหรือ AI ตอบกลับในรูปแบบที่ใช้ไม่ได้ ระบบจึงแสดงผลแบบกฎอย่างเดียว (rule_only) "
     "บรรทัดที่กฎแปลงไม่ได้ยังคงป้าย \"แปลงไม่ได้\""
 )
+# Shown next to NOTICE_AI_FAILED: "<prefix><reason label> — <scrubbed diagnostic detail>".
+NOTICE_AI_FAILED_REASON_PREFIX = "สาเหตุที่เรียก AI ไม่สำเร็จ: "
+AI_FAILURE_LABELS = {
+    _ai.REASON_AUTH: "API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน (Auth error)",
+    _ai.REASON_MODEL: "ไม่พบชื่อโมเดลหรือโมเดลไม่รองรับ (Invalid model name)",
+    _ai.REASON_RATE_LIMIT: "เรียกใช้เกินโควตาหรือถี่เกินไป (Rate limit)",
+    _ai.REASON_TIMEOUT: "หมดเวลารอคำตอบ (Timeout)",
+    _ai.REASON_NETWORK: "เชื่อมต่อบริการ AI ไม่ได้ (Network error)",
+    _ai.REASON_SERVER: "บริการ AI ขัดข้องฝั่งผู้ให้บริการ (Server error)",
+    _ai.REASON_BAD_REQUEST: "ผู้ให้บริการปฏิเสธคำขอ (Bad request)",
+    _ai.REASON_BAD_ANSWER: "AI ตอบกลับในรูปแบบที่ใช้ไม่ได้ (Unusable answer)",
+}
+
+
+def ai_failure_notice(exc: AIError) -> str:
+    """User-facing reason line for an AI failure (detail is already scrubbed by the client)."""
+    label = AI_FAILURE_LABELS.get(getattr(exc, "reason", ""), AI_FAILURE_LABELS[_ai.REASON_BAD_ANSWER])
+    detail = (getattr(exc, "detail", "") or str(exc)).replace(" | ", " / ").strip() or "-"
+    if contains_secret(detail):
+        detail = "-"
+    return f"{NOTICE_AI_FAILED_REASON_PREFIX}{label} — {detail}"
+
+
 NOTICE_AI_REVIEW = (
     "มีบรรทัดที่ AI แปลให้ ซึ่งติดป้าย \"มาจาก AI ต้องตรวจสอบก่อนใช้\" "
     "กรุณาตรวจสอบกับเอกสารของผู้ผลิตก่อนนำไปใช้ (ระบบไม่ใช้ค่าความมั่นใจที่ AI รายงานเอง)"
@@ -294,7 +318,7 @@ def _apply_ai(
     AI did not answer keep their "แปลงไม่ได้" comments."""
     remove: set[int] = set()
     insert: dict[int, list[RenderedLine]] = {}
-    tail: list[RenderedLine] = []
+    tail: list[tuple[int, list[RenderedLine]]] = []  # (first source line, AI lines)
     translated: set[int] = set()
     for job in jobs:
         answer = answers.get(job.item.id)
@@ -313,7 +337,7 @@ def _apply_ai(
             remove.update(idxs)
             insert.setdefault(idxs[0], []).extend(new)
         else:
-            tail.extend(new)
+            tail.append((job.line_numbers[0], new))
         translated.update(wanted)
 
     out: list[RenderedLine] = []
@@ -321,10 +345,20 @@ def _apply_ai(
         out.extend(insert.get(i, []))
         if i not in remove:
             out.append(line)
-    if tail:
-        last = out[-1] if out else None
-        end = len(out) - 1 if last and not last.is_comment and last.text.strip() in ("return", "end") else len(out)
-        out[end:end] = tail
+    # Jobs with no rendered line to replace: place them by ORIGINAL line number (after the
+    # last rendered line from an earlier source line), never appended out of order at the
+    # end; they always stay before the closing end/return.
+    for first, new in sorted(tail, key=lambda t: t[0]):
+        terminator = next(
+            (i for i in range(len(out) - 1, -1, -1)
+             if not out[i].is_comment and out[i].text.strip() in ("return", "end")),
+            len(out),
+        )
+        pos = 0
+        for i, line in enumerate(out[:terminator]):
+            if line.source_line is not None and line.source_line < first:
+                pos = i + 1
+        out[pos:pos] = new
     return out, translated
 
 
@@ -333,9 +367,9 @@ def _run_jobs(result: ConversionResult, jobs: list[_Job], translator: Translator
     result.ai_sent_line_numbers = sorted(n for j in jobs for n in j.line_numbers)
     try:
         answers = translator.translate_items([j.item for j in jobs], result.source_vendor, result.target_vendor)
-    except AIError:
+    except AIError as exc:
         result.effective_mode = ConversionMode.RULE_ONLY
-        result.notices.append(NOTICE_AI_FAILED)
+        result.notices += [NOTICE_AI_FAILED, ai_failure_notice(exc)]
         return result
     result.lines, translated = _apply_ai(result.lines, jobs, answers, result.target_vendor)
     result.unconverted_items = [i for i in result.unconverted_items if i.line_no not in translated]
@@ -385,8 +419,8 @@ def convert(
     result.ai_sent_line_numbers = sent
     try:
         answer = translator.translate_config(sanitized.sanitized_text, source_vendor, target_vendor)
-    except AIError:
-        result.notices.append(NOTICE_AI_FAILED)
+    except AIError as exc:
+        result.notices += [NOTICE_AI_FAILED, ai_failure_notice(exc)]
         return result
     stripped = set(sanitized.stripped_line_numbers)
     advisories = [

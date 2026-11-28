@@ -20,6 +20,7 @@ from app.core.rules.base import (
     LineKind,
     LineStatus,
     ParseContext,
+    exit_word,
     out_of_scope_feature,
     reason_out_of_scope,
 )
@@ -72,7 +73,22 @@ def _build_tree(source: Source, ctx: ParseContext) -> list[Block]:
             stack.pop()
         (stack[-1].children if stack else roots).append(node)
         stack.append(node)
-    return roots
+    return _attach_trailing_exits(roots, ctx.vendor)
+
+
+def _attach_trailing_exits(roots: list[Block], vendor: Vendor) -> list[Block]:
+    """Hand-written scripts often close a view with an UNindented `exit` (Cisco) / `quit`
+    (Huawei). Read it as the last child of the block above, so it maps to the target's exit
+    word for that block instead of becoming an orphan top-level line."""
+    word = exit_word(vendor)
+    out: list[Block] = []
+    for root in roots:
+        if out and out[-1].children and not root.children and root.header.body.lower() == word:
+            root.header.indent = out[-1].children[0].header.indent
+            out[-1].children.append(root)
+        else:
+            out.append(root)
+    return out
 
 
 def parse(source: Source, vendor: Vendor, handlers: list[BlockHandler]) -> ParseResult:

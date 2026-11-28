@@ -95,6 +95,10 @@ class InterfaceIR(BaseModel):
 
     if_type: str  # neutral type: "gigabitethernet", "loopback", "vlanif", "eth-trunk", "serial", ...
     number: str  # slot/port string kept verbatim, e.g. "0/0/1" — never translated
+    # Port range (Cisco `interface range Gi0/1 - 4` <-> Huawei `port-group group-member
+    # GigabitEthernet0/1 to GigabitEthernet0/4`): `number` is the first port, `range_end` the
+    # last, both verbatim. None = a single interface.
+    range_end: Optional[str] = None
     description: Optional[str] = None
     ipv4: Optional[IPv4Interface] = None
     shutdown: Optional[bool] = None  # None = not stated in source (do not guess)
@@ -290,6 +294,7 @@ class AclIR(BaseModel):
     name: Optional[str] = None  # named ACL
     entries: list[AclEntryIR] = Field(default_factory=list)
     source_lines: list[int] = Field(default_factory=list)
+    field_lines: dict[str, int] = Field(default_factory=dict)
     notes: list[NoteIR] = Field(default_factory=list)
 
     @property

@@ -59,6 +59,10 @@ from app.core.ir import (
     Vendor,
 )
 from app.core.rules.base import (
+    CISCO_EXIT_RULES,
+    HUAWEI_EXIT_RULES,
+    exit_word,
+    view_exit,
     REASON_BAD_VALUE,
     REASON_NO_RULE,
     Block,
@@ -196,7 +200,7 @@ _CISCO_BGP_RULES = compile_rules(
         (r"^no\s+auto-summary$", not_needed_rule(REASON_BGP_AUTO_SUMMARY)),
         (r"^exit-address-family$", _structural_ok),
     ]
-) + CISCO_REDISTRIBUTE_RULES
+) + CISCO_REDISTRIBUTE_RULES + CISCO_EXIT_RULES
 
 _HUAWEI_BGP_RULES = compile_rules(
     [
@@ -214,7 +218,7 @@ _HUAWEI_BGP_RULES = compile_rules(
         (r"^network\s+(\S+)(?:\s+(\S+))?$", _bgp_network(True)),
         (r"^undo\s+synchronization$", not_needed_rule(REASON_BGP_SYNC)),
     ]
-) + HUAWEI_REDISTRIBUTE_RULES
+) + HUAWEI_REDISTRIBUTE_RULES + HUAWEI_EXIT_RULES
 
 _CISCO_IPV4_AF = re.compile(r"^address-family\s+ipv4(\s+unicast)?$", re.IGNORECASE)
 _CISCO_OTHER_AF = re.compile(r"^address-family\b", re.IGNORECASE)
@@ -676,6 +680,9 @@ def cisco_acl_named(block: Block, ctx: ParseContext) -> bool:
         body = child.header.body
         for grandchild in child.children:
             ctx.unconverted_block(grandchild, REASON_NO_RULE, acl.notes)
+        if body.lower() == exit_word(ctx.vendor):
+            view_exit(None, child.header, ctx, acl)
+            continue
         if _REMARK.match(body):
             ctx.unconverted(child.header, REASON_ACL_REMARK, acl.notes)
             continue
@@ -720,7 +727,9 @@ def _huawei_acl_body(block: Block, ctx: ParseContext, acl: AclIR) -> None:
         body = child.header.body
         for grandchild in child.children:
             ctx.unconverted_block(grandchild, REASON_NO_RULE, acl.notes)
-        if re.match(r"^step\s+\d+$", body, re.IGNORECASE):
+        if body.lower() == exit_word(ctx.vendor):
+            view_exit(None, child.header, ctx, acl)
+        elif re.match(r"^step\s+\d+$", body, re.IGNORECASE):
             ctx.not_needed(child.header, REASON_ACL_STEP, acl.notes)
         elif re.match(r"^description\b", body, re.IGNORECASE):
             ctx.unconverted(child.header, REASON_ACL_REMARK, acl.notes)

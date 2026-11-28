@@ -8,7 +8,7 @@ If anything here conflicts with that file, the proposal wins. Do not expand scop
 Network Configuration Conversion System for Multi-Vendor Migration.
 Bidirectional translation **Cisco IOS-XE ⇄ Huawei VRP**, **IPv4 only**. No other vendor pair.
 
-**Status: feature-complete.** Milestones 1–5 are done and **596 `pytest` tests pass**.
+**Status: feature-complete.** Milestones 1–5 are done and **705 `pytest` tests pass**.
 
 | Milestone | Delivered |
 |---|---|
@@ -58,7 +58,7 @@ raw text ─► strip_secrets ─► Parser (per vendor) ─► IR (vendor-agnos
 
 | Tier | File(s) | Coverage |
 |---|---|---|
-| 1 | `tier1_system.py`, `tier1_vlan.py`, `tier1_interface.py`, `tier1_routing.py`, `interface_names.py` | hostname/domain/NTP target/syslog target/file assembly; VLAN & port (access/trunk/STP edge); interfaces; static routes; OSPFv2 |
+| 1 | `tier1_system.py`, `tier1_vlan.py`, `tier1_interface.py`, `tier1_routing.py`, `interface_names.py` | hostname/domain/NTP target/syslog target/file assembly (`configure terminal`⇄`system-view` rendered first, `end`⇄`return`, `write memory`/`copy run start`⇄`save force` after it, `no ip domain-lookup` → not needed); view exits `exit`⇄`quit` (one per nested Huawei view); VLAN & port (access/trunk/STP edge); interfaces incl. `interface range`⇄`port-group group-member` (numbers verbatim); static routes; OSPFv2 |
 | 2 | `tier2_services.py` | RIP, redistribute, default route, NTP, syslog, VTY/SSH (no user-account commands) |
 | 3 | `tier3_bgp_acl.py` | BGP, ACL, with behavioural tests (silent-failure risk) |
 
@@ -106,7 +106,9 @@ Every output line carries exactly one label, in every mode (`app/core/ir.py::Pro
 - Advisories written as target-vendor **comments**, never as commands: credential-stripped notices,
   the AI-secret notice, and `stelnet server enable`. Huawei needs SSH enabled with this command, but
   the renderer only writes it as a `SYSTEM` comment advisory (`ADVISORY_STELNET`) and never emits it
-  as a command.
+  as a command. Likewise a Cisco trunk with no allowed-VLAN list gets the comment advisory
+  `ADVISORY_TRUNK_ALLOW_ALL` ("…port trunk allow-pass vlan all") right after `port link-type trunk`,
+  never the command itself.
 
 Nothing is ever silently dropped. Unsupported or out-of-scope commands are written as comments
 using the **target** vendor's comment marker (`!` Cisco, `#` Huawei) with a review warning.
@@ -133,6 +135,9 @@ Route-Map/Route-Policy, VRF, Tunnel & ATM interfaces, and every "not supported" 
 4. **Strip before deploy** (`app/services/deploy_service.py::build_plan`):
    - Push **only** `RULE` (`"มาจากกฎ"`) and `SYSTEM` (`"ระบบสร้างขึ้นเอง"`) command lines.
    - Always strip comment lines, `UNCONVERTED`, `AI`/`AI_REVIEW`, and `NOT_NEEDED` lines.
+   - Mode entry/exit and save lines (`TERMINATORS`: `configure terminal`, `system-view`, `end`,
+     `return`, `save force`, `write memory`, …) are not pushed: Netmiko enters/leaves config mode
+     itself and saves with `save_config()`.
    - Also strip credential/user lines (`strip_secrets` + `contains_secret`). Removed credentials
      are reported without their text.
    - Deployment always shows the full command list and requires explicit user confirmation.
@@ -182,7 +187,9 @@ payload) must always pass. Do not weaken or skip them.
   Huawei ACL 2800–2999/3800–3999 (H→C), `port link-type hybrid`, `vlan 10,20` followed by
   `name X`, anything referencing Route-Map/Route-Policy, RIP with >1 process, password lines.
 - **Allowed normalizations:** `vlan batch 10 20 30` → one VLAN block each; prefix length
-  → full dotted mask; ACL rule renumbering.
+  → full dotted mask; ACL rule renumbering; Cisco `line vty 0 15` → Huawei `user-interface vty 0 4`
+  (with a note: common Huawei maximum); top-level unconverted/AI lines are placed in source order
+  (after the section that precedes them in the source), not appended at the end.
 
 ### Supported vs not supported
 
@@ -261,6 +268,7 @@ tests/
   test_secret_stripper.py  test_prescan.py  test_tier1_rules.py  test_tier2_rules.py
   test_tier3_rules.py  test_ai_hybrid.py  test_batch.py  test_deploy.py  test_history.py
   test_inventory_hardware.py  test_topology_settings.py  test_web_ui.py  test_ui_samples.py
+  test_ai_translator.py  test_huawei_accuracy.py
 ```
 
 Static URLs carry `?v={{ asset_v }}`. Bump `web.ASSET_VERSION` on any UI/JS change.
@@ -276,7 +284,12 @@ Static URLs carry `?v={{ asset_v }}`. Bump `web.ASSET_VERSION` on any UI/JS chan
 | `AI_COMPLEX_COMMANDS` | *(empty)* | Comma-separated, case-insensitive block-header prefixes hybrid always sends to AI, e.g. `router bgp,bgp` |
 | `DATABASE_URL` | `sqlite:///./netmigrate.db` | Single SQLite file |
 
-**Google AI Studio / Gemini** through its OpenAI-compatible endpoint:
+**Google AI Studio / Gemini**: when the base URL contains `generativelanguage.googleapis.com` or the
+model starts with `gemini-`, `ai_translator.py` automatically uses the native REST API
+(`/v1beta/models/{model}:generateContent`, `x-goog-api-key` header, JSON response mode) instead of
+`/chat/completions`. On failure, the fallback banner shows the reason (auth / invalid model / rate
+limit / timeout / network / server / bad request / unusable answer), and the client logs the HTTP
+status and provider message. The key is never logged.
 
 ```
 LLM_API_KEY=<AI Studio key>

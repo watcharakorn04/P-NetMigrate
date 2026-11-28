@@ -38,7 +38,13 @@ except Exception:  # pragma: no cover
 NETMIKO_DEVICE_TYPE = {Vendor.CISCO_IOS_XE: "cisco_xe", Vendor.HUAWEI_VRP: "huawei"}
 LEVELS = ("INFO", "SUCCESS", "WARNING", "ERROR", "COMMAND")
 SIM_DELAY = 0.15  # seconds between simulated log lines (so the SSE stream is visibly live)
-TERMINATORS = {"end", "return"}  # Netmiko leaves config mode itself
+# Mode entry/exit and save lines are never pushed: Netmiko enters and leaves config mode
+# itself and saves with save_config() after a successful push.
+TERMINATORS = {
+    "end", "return",
+    "configure terminal", "conf t", "system-view",
+    "save", "save force", "write", "write memory", "wr", "copy running-config startup-config",
+}
 
 # Removal reasons (stable codes; the UI translates them)
 R_COMMENT = "comment"

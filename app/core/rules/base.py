@@ -262,6 +262,27 @@ def not_needed_rule(reason: str) -> Callable[..., None]:
     return fn
 
 
+def view_exit(m, line, ctx, target) -> None:
+    """Child-rule fn for an explicit view exit (Cisco `exit` <-> Huawei `quit`).
+
+    It is navigation, not intent: the source line is recorded in the owner's `field_lines`
+    (never compared at IR level) so the renderer writes the target's exit word for that block.
+    """
+    field_lines = getattr(target, "field_lines", None)
+    if field_lines is not None:
+        field_lines["exit"] = line.no
+    ctx.rule(line, SyntaxCategory.DIRECT)
+
+
+def exit_word(vendor: Vendor) -> str:
+    """Command that steps back one view level: Cisco `exit`, Huawei `quit`."""
+    return "exit" if vendor is Vendor.CISCO_IOS_XE else "quit"
+
+
+CISCO_EXIT_RULES: list[ChildRule] = compile_rules([(r"^exit$", view_exit)])
+HUAWEI_EXIT_RULES: list[ChildRule] = compile_rules([(r"^quit$", view_exit)])
+
+
 def apply_line_rules(
     child: Block,
     ctx: ParseContext,

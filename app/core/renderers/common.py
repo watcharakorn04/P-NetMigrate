@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from app.core.ir import AclIR, InterfaceIR, NoteIR, Provenance, RedistributeIR, RenderedLine, SyntaxCategory, Vendor
+from app.core.ir import AclIR, InterfaceIR, InterfaceRef, NoteIR, Provenance, RedistributeIR, RenderedLine, SyntaxCategory, Vendor
 from app.core.rules import interface_names
 
 D = SyntaxCategory.DIRECT
@@ -57,18 +57,84 @@ class LineWriter:
             )
         )
 
+    def note_line(self, note: NoteIR) -> RenderedLine:
+        """Unconverted / not-needed source line -> target comment with label and reason."""
+        return RenderedLine(
+            text=f"{self.marker} [{note.provenance.value}] {note.text} -- {note.reason}",
+            provenance=note.provenance,
+            source_line=note.source_line,
+            is_comment=True,
+            warning=note.reason,
+        )
+
     def notes(self, notes: list[NoteIR]) -> None:
-        """Unconverted / not-needed source lines -> target comments with label and reason."""
         for note in notes:
-            self.lines.append(
-                RenderedLine(
-                    text=f"{self.marker} [{note.provenance.value}] {note.text} -- {note.reason}",
-                    provenance=note.provenance,
-                    source_line=note.source_line,
-                    is_comment=True,
-                    warning=note.reason,
-                )
-            )
+            self.lines.append(self.note_line(note))
+
+    def exit_view(self, source_line: Optional[int], levels: int = 1) -> None:
+        """Explicit view exit written by the source (Cisco `exit` <-> Huawei `quit`).
+
+        `levels` > 1 when the target block nests views (Huawei `ospf` > `area`, `bgp` >
+        `ipv4-family`): one exit per level so the next block starts in the right view.
+        """
+        word = "exit" if self.target is Vendor.CISCO_IOS_XE else "quit"
+        for depth in range(levels - 1, -1, -1):
+            self.cmd(" " * depth + word, D, source_line)
+
+    def top_level_notes(self, notes: list[NoteIR]) -> None:
+        """Place each top-level note (an unconverted/not-needed source block) next to the
+        rendered section that precedes it in the SOURCE, instead of piling all of them up at
+        the end of the file. The renderer's section order (ACL before interfaces, ...) is
+        kept; notes go right after the last section that starts before them. Hybrid mode
+        replaces these comments with AI lines in place, so AI output also lands in source order.
+        """
+        if not notes:
+            return
+        sections: list[list[RenderedLine]] = [[]]
+        for line in self.lines:
+            sections[-1].append(line)
+            if line.is_comment and line.text == self.marker:
+                sections.append([])
+        if not sections[-1]:
+            sections.pop()
+
+        def start(section: list[RenderedLine]) -> Optional[int]:
+            nos = [l.source_line for l in section if not l.is_comment and l.source_line]
+            return min(nos) if nos else None
+
+        starts = [start(s) for s in sections]
+        after: dict[int, list[NoteIR]] = {}
+        for note in sorted(notes, key=lambda n: n.source_line):
+            idx = 0  # default: right after the leading comment section
+            for i, s in enumerate(starts):
+                if s is not None and s < note.source_line:
+                    idx = i
+            after.setdefault(idx, []).append(note)
+
+        out: list[RenderedLine] = []
+        for i, section in enumerate(sections):
+            out.extend(section)
+            if i in after:
+                if out and not (out[-1].is_comment and out[-1].text == self.marker):
+                    out.append(RenderedLine(text=self.marker, provenance=Provenance.RULE, category=D, is_comment=True))
+                out.extend(self.note_line(n) for n in after[i])
+                out.append(RenderedLine(text=self.marker, provenance=Provenance.RULE, category=D, is_comment=True))
+        self.lines = out
+
+
+def interface_header(iface: InterfaceIR, target: Vendor) -> str:
+    """`interface <name>`, or the port-range form when the IR holds a range.
+
+    Port numbers are written verbatim (proposal §2.3.2 item 4): only the type name changes.
+    """
+    name = interface_names.display_name(iface.ref, target)
+    if not iface.range_end:
+        return f"interface {name}"
+    if target is Vendor.CISCO_IOS_XE:
+        last = interface_names.split_last(iface.range_end)
+        return f"interface range {name} - {last[1] if last else iface.range_end}"
+    end = interface_names.display_name(InterfaceRef(if_type=iface.if_type, number=iface.range_end), target)
+    return f"port-group group-member {name} to {end}"
 
 
 # ----------------------------------------------------------------------------- warnings (Thai, user-facing)
@@ -105,6 +171,22 @@ ADVISORY_STELNET = "แนะนำให้เปิดใช้งาน SSH S
 WARN_CISCO_SSH = (
     "Cisco ต้องมี ip domain name และ RSA key (crypto key generate rsa) ก่อน SSH จะใช้งานได้ "
     "ระบบไม่สร้าง key และไม่แปลงบัญชีผู้ใช้ให้ กรุณาตั้งค่าเองบนอุปกรณ์ปลายทาง"
+)
+WARN_HUAWEI_VTY_CLAMPED = (
+    "สวิตช์ Huawei ทั่วไปรองรับ VTY 0–4 (ขยายได้ด้วย user-interface maximum-vty บางรุ่น) "
+    "ระบบจึงแปลงช่วง VTY ของต้นทางเป็น user-interface vty 0 4 — ถ้าต้องการจำนวน VTY มากกว่านี้ให้ตั้งค่าเองบนอุปกรณ์ปลายทาง"
+)
+ADVISORY_TRUNK_ALLOW_ALL = (
+    "แนะนำ: Cisco อนุญาตทุก VLAN บนพอร์ต trunk เป็นค่าเริ่มต้น แต่ Huawei อนุญาตเฉพาะ VLAN 1 "
+    "ถ้าต้องการพฤติกรรมเดิมให้เพิ่มคำสั่ง: port trunk allow-pass vlan all"
+)
+WARN_SAVE_FORCE = (
+    "save force บันทึก Config ทันทีโดยไม่ถามยืนยัน (Y/N) จึงวางคำสั่งแบบไม่โต้ตอบได้ "
+    "แต่จะเขียนทับ Config ที่บันทึกไว้เดิมบนอุปกรณ์ — การ Deploy ผ่านระบบบันทึกค่าให้เองอยู่แล้วและไม่ส่งบรรทัดนี้"
+)
+WARN_WRITE_MEMORY = (
+    "write memory ต้องสั่งในโหมด privileged EXEC (หลัง end) และจะเขียนทับ startup-config เดิม "
+    "— การ Deploy ผ่านระบบบันทึกค่าให้เองอยู่แล้วและไม่ส่งบรรทัดนี้"
 )
 WARN_HUAWEI_VTY_RANGE = "Huawei หลายรุ่นรองรับ VTY 0–4 (บางรุ่นถึง 0–14) กรุณาตรวจสอบช่วง VTY บนอุปกรณ์ปลายทาง"
 

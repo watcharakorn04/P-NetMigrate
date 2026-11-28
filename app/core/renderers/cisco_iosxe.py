@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from app.core.ir import AclRefIR, DeviceConfigIR, InterfaceIR, Provenance, RenderedLine, SyntaxCategory, Vendor
 from app.core.renderers.common import (
+    WARN_WRITE_MEMORY,
+    interface_header,
     WARN_ACL_NUMBER_ASSIGNED,
     WARN_CISCO_SSH,
     WARN_RIP_NO_VERSION,
@@ -46,13 +48,15 @@ def _render_acls(w: LineWriter, ir: DeviceConfigIR) -> None:
         for entry in acl.entries:
             w.cmd(f" {format_cisco_entry(entry)}", T, entry.source_line)
         w.notes(acl.notes)
+        if "exit" in acl.field_lines:
+            w.exit_view(acl.field_lines["exit"])
         w.separator()
 
 
 def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> None:
     name = display_name(iface.ref, C)
     fl = iface.field_lines
-    w.cmd(f"interface {name}", D, iface.source_lines[0], interface_warnings(iface, name))
+    w.cmd(interface_header(iface, C), D, iface.source_lines[0], interface_warnings(iface, name))
     if iface.description:
         w.cmd(f" description {iface.description}", D, fl.get("description"))
     if iface.link_protocol:
@@ -83,6 +87,8 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
     if iface.shutdown is not None:
         w.cmd(" shutdown" if iface.shutdown else " no shutdown", D, fl.get("shutdown"))
     w.notes(iface.notes)
+    if "exit" in fl:
+        w.exit_view(fl["exit"])
     w.separator()
 
 
@@ -105,6 +111,8 @@ def _render_ospf(w: LineWriter, ir: DeviceConfigIR) -> None:
     for r in ospf.redistribute:
         w.cmd(f" {cisco_redistribute(r, 'ospf')}", T, r.source_line)
     w.notes(ospf.notes)
+    if "exit" in fl:
+        w.exit_view(fl["exit"])
     w.separator()
 
 
@@ -126,6 +134,8 @@ def _render_rip(w: LineWriter, ir: DeviceConfigIR) -> None:
     for r in rip.redistribute:
         w.cmd(f" {cisco_redistribute(r, 'rip')}", T, r.source_line)
     w.notes(rip.notes)
+    if "exit" in fl:
+        w.exit_view(fl["exit"])
     w.separator()
 
 
@@ -155,6 +165,8 @@ def _render_bgp(w: LineWriter, ir: DeviceConfigIR) -> None:
                 w.cmd(f"  neighbor {n.address} activate", S, n.source_line)
         w.cmd(" exit-address-family", S, src)
     w.notes(bgp.notes)
+    if "exit" in bgp.field_lines:
+        w.exit_view(bgp.field_lines["exit"])
     w.separator()
 
 
@@ -169,6 +181,8 @@ def _render_vty(w: LineWriter, ir: DeviceConfigIR) -> None:
             warn = WARN_CISCO_SSH if "ssh" in vty.transport else None
             w.cmd(f" transport input {' '.join(vty.transport)}", D, fl.get("transport"), warn)
         w.notes(vty.notes)
+        if "exit" in fl:
+            w.exit_view(fl["exit"])
         w.separator()
 
 
@@ -178,6 +192,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.comment(c)
     w.separator()
 
+    if "config_mode" in ir.field_lines:  # `system-view` -> always the first command
+        w.cmd("configure terminal", D, ir.field_lines["config_mode"])
     if ir.hostname:
         w.cmd(f"hostname {ir.hostname}", D, ir.field_lines.get("hostname"))
     if ir.domain_name:
@@ -194,6 +210,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
             )
             w.cmd(f" name {vlan.name}", D, vlan.field_lines.get("name"), warn)
         w.notes(vlan.notes)
+        if "exit" in vlan.field_lines:
+            w.exit_view(vlan.field_lines["exit"])
         w.separator()
 
     _render_acls(w, ir)
@@ -232,8 +250,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
 
     _render_vty(w, ir)
 
-    if ir.notes:
-        w.notes(ir.notes)
-        w.separator()
+    w.top_level_notes(ir.notes)
     w.cmd("end", D)
+    if "save" in ir.field_lines:  # after end: write memory is a privileged EXEC command
+        w.cmd("write memory", T, ir.field_lines["save"], WARN_WRITE_MEMORY)
     return w.lines

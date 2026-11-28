@@ -330,9 +330,11 @@ class TestVty:
     def test_huawei_protocol_all(self):
         assert has_cmd(h2c("user-interface vty 0 4\n protocol inbound all\n"), "transport input ssh telnet")
 
-    def test_vty_range_above_4_warns_on_huawei(self):
-        line = cmd(c2h("line vty 0 15\n transport input ssh\n"), "user-interface vty 0 15")
+    def test_vty_range_above_4_is_limited_to_0_4_on_huawei(self):
+        result = c2h("line vty 0 15\n transport input ssh\n")
+        line = cmd(result, "user-interface vty 0 4")
         assert line.warning
+        assert not has_cmd(result, "user-interface vty 0 15")
 
     def test_single_vty_line(self):
         assert has_cmd(c2h("line vty 0\n login local\n"), "user-interface vty 0 0")

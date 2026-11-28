@@ -17,7 +17,7 @@ from app.services.mode_selector import mode_availability, resolve_mode
 BASE_DIR = Path(__file__).parent
 LANG_COOKIE = "lang"
 # Bumped with every UI release: appended to /static URLs so browsers never run a stale script.
-ASSET_VERSION = "0.5.0"
+ASSET_VERSION = "0.5.1"
 
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.globals["asset_v"] = ASSET_VERSION

@@ -283,7 +283,20 @@ _PHRASES: dict[str, str] = {
         "missing or incomplete ACL)",
 }
 
+_PHRASES.update({
+    engine.AI_FAILURE_LABELS["auth"]: "invalid API key or no permission (auth error)",
+    engine.AI_FAILURE_LABELS["model"]: "model name not found or not supported (invalid model name)",
+    engine.AI_FAILURE_LABELS["rate_limit"]: "quota exceeded or too many requests (rate limit)",
+    engine.AI_FAILURE_LABELS["timeout"]: "no answer within the time limit (timeout)",
+    engine.AI_FAILURE_LABELS["network"]: "cannot connect to the AI service (network error)",
+    engine.AI_FAILURE_LABELS["server"]: "the AI provider had an internal error (server error)",
+    engine.AI_FAILURE_LABELS["bad_request"]: "the provider rejected the request (bad request)",
+    engine.AI_FAILURE_LABELS["bad_answer"]: "the AI answer was not in a usable format (unusable answer)",
+})
+
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile("^" + re.escape(engine.NOTICE_AI_FAILED_REASON_PREFIX.strip()) + r" (?P<x>.+?) — (?P<y>.*)$", re.S),
+     "AI failure reason: {x} — {y}"),
     (re.compile(r"^อยู่นอกขอบเขตของระบบ \((?P<x>.+)\) — ต้องตรวจสอบและตั้งค่าเอง$"),
      "Out of scope ({x}) — review and configure manually"),
     (re.compile(r"^ยังไม่รองรับ: (?P<x>.+) — ต้องตรวจสอบและตั้งค่าเอง$"),

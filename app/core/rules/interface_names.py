@@ -90,6 +90,23 @@ def is_virtual(if_type: str) -> bool:
     return _BY_NEUTRAL[if_type].virtual
 
 
+def split_last(number: str) -> tuple[str, int] | None:
+    """"0/0/4" -> ("0/0/", 4); "4" -> ("", 4); None if the last component is not a plain number."""
+    head, _, last = number.rpartition("/")
+    if not last.isdigit():
+        return None
+    return (head + "/" if head else ""), int(last)
+
+
+def range_numbers(start: str, end: str) -> Optional[list[str]]:
+    """Every port number of a range ("0/1", "0/4" -> 0/1 .. 0/4). Only the LAST component may
+    differ and it must not decrease; None otherwise. Numbers are kept verbatim (never renumbered)."""
+    a, b = split_last(start), split_last(end)
+    if a is None or b is None or a[0] != b[0] or b[1] < a[1]:
+        return None
+    return [f"{a[0]}{i}" for i in range(a[1], b[1] + 1)]
+
+
 def slot_of(number: str) -> Optional[int]:
     """Slot = first component of a multi-part number ("1/0/3" -> 1); None for "0" or "10"."""
     parts = number.split("/")

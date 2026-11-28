@@ -6,6 +6,10 @@ import re
 
 from app.core.ir import AclRefIR, DeviceConfigIR, InterfaceIR, Provenance, RenderedLine, SyntaxCategory, Vendor
 from app.core.renderers.common import (
+    ADVISORY_TRUNK_ALLOW_ALL,
+    WARN_HUAWEI_VTY_CLAMPED,
+    WARN_SAVE_FORCE,
+    interface_header,
     WARN_ACL_NUMBER_ASSIGNED,
     WARN_BGP_PEER_ENABLE,
     WARN_DEFAULT_GATEWAY,
@@ -53,13 +57,15 @@ def _render_acls(w: LineWriter, ir: DeviceConfigIR) -> None:
         for i, entry in enumerate(acl.entries, start=1):
             w.cmd(f" rule {5 * i} {format_huawei_rule(entry)}", T, entry.source_line)
         w.notes(acl.notes)
+        if "exit" in acl.field_lines:
+            w.exit_view(acl.field_lines["exit"])
         w.separator()
 
 
 def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> None:
     name = display_name(iface.ref, H)
     fl = iface.field_lines
-    w.cmd(f"interface {name}", D, iface.source_lines[0], interface_warnings(iface, name))
+    w.cmd(interface_header(iface, H), D, iface.source_lines[0], interface_warnings(iface, name))
     if iface.description:
         w.cmd(f" description {iface.description}", D, fl.get("description"))
     if iface.link_protocol:
@@ -67,6 +73,10 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
         w.cmd(f" link-protocol {iface.link_protocol}", D, fl.get("link_protocol"), warn)
     if iface.port_mode:
         w.cmd(f" port link-type {iface.port_mode}", D, fl.get("port_mode"), trunk_warning(iface, name))
+        if iface.port_mode == "trunk" and iface.trunk_allowed_vlans is None:
+            # Advice only (comment, never deployed): the proposal allows no auto-filled
+            # command except the BGP activation block (§2.3.2 item 5).
+            w.advisory(ADVISORY_TRUNK_ALLOW_ALL, fl.get("port_mode"))
     if iface.access_vlan is not None:
         w.cmd(f" port default vlan {iface.access_vlan}", D, fl.get("access_vlan"))
     if iface.trunk_allowed_vlans:
@@ -90,6 +100,8 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
     if iface.shutdown is not None:
         w.cmd(" shutdown" if iface.shutdown else " undo shutdown", D, fl.get("shutdown"))
     w.notes(iface.notes)
+    if "exit" in fl:
+        w.exit_view(fl["exit"])
     w.separator()
 
 
@@ -111,6 +123,8 @@ def _render_ospf(w: LineWriter, ir: DeviceConfigIR) -> None:
         for net in area.networks:
             w.cmd(f"  network {net.address} {net.wildcard}", S, net.source_line)
     w.notes(ospf.notes)
+    if "exit" in fl:
+        w.exit_view(fl["exit"], 2 if ospf.areas else 1)
     w.separator()
 
 
@@ -131,6 +145,8 @@ def _render_rip(w: LineWriter, ir: DeviceConfigIR) -> None:
     for r in rip.redistribute:
         w.cmd(f" {huawei_import_route(r, 'rip')}", T, r.source_line)
     w.notes(rip.notes)
+    if "exit" in fl:
+        w.exit_view(fl["exit"])
     w.separator()
 
 
@@ -154,6 +170,8 @@ def _render_bgp(w: LineWriter, ir: DeviceConfigIR) -> None:
         if n.enabled:
             w.cmd(f"  peer {n.address} enable", S, n.source_line, WARN_BGP_PEER_ENABLE, SYSTEM)
     w.notes(bgp.notes)
+    if "exit" in bgp.field_lines:
+        w.exit_view(bgp.field_lines["exit"], 2)  # ipv4-family view, then bgp view
     w.separator()
 
 
@@ -165,14 +183,21 @@ def _render_vty(w: LineWriter, ir: DeviceConfigIR) -> None:
         w.advisory(ADVISORY_STELNET, ssh_lines[0].field_lines.get("transport"), WARN_STELNET)
     for vty in ir.vty_lines:
         fl = vty.field_lines
-        warn = WARN_HUAWEI_VTY_RANGE if vty.last > HUAWEI_VTY_SAFE_MAX else None
-        w.cmd(f"user-interface vty {vty.first} {vty.last}", D, _first(vty.source_lines), warn)
+        last, warn, category = vty.last, None, D
+        if vty.first <= HUAWEI_VTY_SAFE_MAX < vty.last:
+            # e.g. Cisco `line vty 0 15` -> `user-interface vty 0 4` (common Huawei maximum).
+            last, warn, category = HUAWEI_VTY_SAFE_MAX, WARN_HUAWEI_VTY_CLAMPED, T
+        elif vty.last > HUAWEI_VTY_SAFE_MAX:
+            warn = WARN_HUAWEI_VTY_RANGE
+        w.cmd(f"user-interface vty {vty.first} {last}", category, _first(vty.source_lines), warn)
         if vty.login_local:
             w.cmd(" authentication-mode aaa", D, fl.get("login_local"))
         if vty.transport:
             protocol = "all" if len(vty.transport) > 1 else vty.transport[0]
             w.cmd(f" protocol inbound {protocol}", D, fl.get("transport"))
         w.notes(vty.notes)
+        if "exit" in fl:
+            w.exit_view(fl["exit"])
         w.separator()
 
 
@@ -182,6 +207,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.comment(c)
     w.separator()
 
+    if "config_mode" in ir.field_lines:  # `configure terminal` -> always the first command
+        w.cmd("system-view", D, ir.field_lines["config_mode"])
     if ir.hostname:
         w.cmd(f"sysname {ir.hostname}", D, ir.field_lines.get("hostname"))
     if ir.domain_name:
@@ -193,6 +220,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         if vlan.name:
             w.cmd(f" description {vlan.name}", D, vlan.field_lines.get("name"))
         w.notes(vlan.notes)
+        if "exit" in vlan.field_lines:
+            w.exit_view(vlan.field_lines["exit"])
         w.separator()
 
     _render_acls(w, ir)  # before interfaces: traffic-filter references them
@@ -236,8 +265,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
 
     _render_vty(w, ir)
 
-    if ir.notes:
-        w.notes(ir.notes)
-        w.separator()
+    w.top_level_notes(ir.notes)
     w.cmd("return", D)
+    if "save" in ir.field_lines:  # after return: `save` is a user-view command
+        w.cmd("save force", T, ir.field_lines["save"], WARN_SAVE_FORCE)
     return w.lines

@@ -27,6 +27,8 @@ from typing import Optional
 from app.core.ir import OspfIR, OspfNetworkIR, StaticRouteIR, SyntaxCategory, Vendor
 from app.core.rules import interface_names
 from app.core.rules.base import (
+    CISCO_EXIT_RULES,
+    HUAWEI_EXIT_RULES,
     REASON_BAD_VALUE,
     REASON_NO_RULE,
     REASON_UNKNOWN_IF,
@@ -229,7 +231,7 @@ _CISCO_OSPF_RULES = compile_rules(
         (r"^default-information\s+originate$", _default_originate),
         (r"^timers\b", _unsupported("คำสั่งปรับจังหวะเวลา OSPF (Timers)")),
     ]
-) + CISCO_REDISTRIBUTE_RULES
+) + CISCO_REDISTRIBUTE_RULES + CISCO_EXIT_RULES
 
 
 def cisco_ospf(block: Block, ctx: ParseContext) -> bool:
@@ -255,7 +257,7 @@ _HUAWEI_OSPF_RULES = compile_rules(
         (r"^(timer|spf-schedule-interval|lsa-arrival-interval|lsa-originate-interval)\b",
          _unsupported("คำสั่งปรับจังหวะเวลา OSPF (Timers)")),
     ]
-) + HUAWEI_REDISTRIBUTE_RULES
+) + HUAWEI_REDISTRIBUTE_RULES + HUAWEI_EXIT_RULES
 
 
 class _AreaTarget:
@@ -283,7 +285,7 @@ _HUAWEI_AREA_RULES = compile_rules(
         (r"^abr-summary\b", _unsupported("ABR Summarization")),
         (r"^authentication-mode\b", _unsupported("การยืนยันตัวตน OSPF (Authentication)")),
     ]
-)
+) + HUAWEI_EXIT_RULES  # `quit` from the area view
 
 
 def huawei_ospf(block: Block, ctx: ParseContext) -> bool:

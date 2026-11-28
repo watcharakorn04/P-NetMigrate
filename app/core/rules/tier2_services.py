@@ -38,6 +38,8 @@ from typing import Optional
 from app.core.ir import BgpIR, OspfIR, RedistributeIR, RipIR, ServerIR, SyntaxCategory, Vendor, VtyIR
 from app.core.rules import interface_names
 from app.core.rules.base import (
+    CISCO_EXIT_RULES,
+    HUAWEI_EXIT_RULES,
     REASON_BAD_VALUE,
     REASON_NO_RULE,
     REASON_UNKNOWN_IF,
@@ -222,7 +224,7 @@ _CISCO_RIP_RULES = compile_rules(
         (r"^default-information\s+originate$", _rip_default_originate),
         (r"^timers\b", unsupported_rule(FEATURE_RIP_TIMERS)),
     ]
-) + CISCO_REDISTRIBUTE_RULES
+) + CISCO_REDISTRIBUTE_RULES + CISCO_EXIT_RULES
 
 _HUAWEI_RIP_RULES = compile_rules(
     [
@@ -236,7 +238,7 @@ _HUAWEI_RIP_RULES = compile_rules(
         (r"^default-route\s+originate$", _rip_default_originate),
         (r"^timers\s+rip\b", unsupported_rule(FEATURE_RIP_TIMERS)),
     ]
-) + HUAWEI_REDISTRIBUTE_RULES
+) + HUAWEI_REDISTRIBUTE_RULES + HUAWEI_EXIT_RULES
 
 
 def _rip_handler(vendor: Vendor, header_re: str, rules: list[ChildRule]) -> BlockHandler:
@@ -351,7 +353,7 @@ _CISCO_VTY_RULES = compile_rules(
         (r"^transport\s+input\s+(.+)$", _vty_transport),
         (r"^access-class\s+\S+\s+(in|out)\b", unsupported_rule(FEATURE_VTY_ACL)),
     ]
-)
+) + CISCO_EXIT_RULES
 
 _HUAWEI_VTY_RULES = compile_rules(
     [
@@ -361,7 +363,7 @@ _HUAWEI_VTY_RULES = compile_rules(
         (r"^protocol\s+inbound\s+(ssh|telnet|all)$", _vty_transport),
         (r"^acl\s+\S+\s+(inbound|outbound)$", unsupported_rule(FEATURE_VTY_ACL)),
     ]
-)
+) + HUAWEI_EXIT_RULES
 
 
 def _vty_handler(vendor: Vendor, header_re: str, rules: list[ChildRule]) -> BlockHandler:
