@@ -7,6 +7,9 @@
   switchport trunk allowed vlan 10,30-35  <-> port trunk allow-pass vlan 10 30 to 35  (T)
   spanning-tree portfast [edge]           <-> stp edged-port enable              (D)
   switchport trunk encapsulation dot1q     -> "ไม่ต้องใช้คำสั่งนี้" (Huawei is 802.1Q only)
+  switchport nonegotiate                   -> "ไม่ต้องใช้คำสั่งนี้" (Huawei VRP has no DTP; never
+                                              `undo negotiation auto`, which disables Ethernet
+                                              speed/duplex auto-negotiation instead)
   switchport port-security                <-> port-security enable               (D)
   switchport port-security maximum <n>    <-> port-security max-mac-num <n>      (D; never max-mac-number)
   switchport port-security violation protect|restrict|shutdown
@@ -59,6 +62,10 @@ REASON_ALLOW_ALL = reason_intentional(
 )
 REASON_HYBRID = reason_intentional("Cisco ไม่มีพอร์ตแบบ hybrid ที่ความหมายตรงกัน")
 REASON_DOT1Q = "Huawei รองรับเฉพาะ 802.1Q อยู่แล้ว จึงไม่ต้องกำหนด encapsulation"
+REASON_NONEGOTIATE = (
+    "Huawei VRP ไม่มีโปรโตคอล DTP จึงไม่ต้องปิดการเจรจา trunk "
+    "(ห้ามแปลงเป็น undo negotiation auto ซึ่งเป็นการปิด auto-negotiation ความเร็ว/duplex ของพอร์ต)"
+)
 REASON_BPDUGUARD_INTERFACE = (
     "Huawei S-series ใช้ stp bpdu-protection เป็นคำสั่งระดับ system-view เท่านั้น "
     "(ป้องกันทุกพอร์ตที่ตั้ง stp edged-port enable) จึงไม่ใส่ไว้ใน interface/port-group — "
@@ -274,6 +281,10 @@ def _not_needed_dot1q(m, line, ctx, iface):
     ctx.not_needed(line, REASON_DOT1Q, iface.notes)
 
 
+def _not_needed_nonegotiate(m, line, ctx, iface):
+    ctx.not_needed(line, REASON_NONEGOTIATE, iface.notes)
+
+
 def _not_needed_bpduguard(m, line, ctx, iface):
     ctx.not_needed(line, REASON_BPDUGUARD_INTERFACE, iface.notes)
 
@@ -315,6 +326,7 @@ CISCO_SWITCHPORT_RULES = compile_rules(
         (r"^switchport\s+trunk\s+allowed\s+vlan\s+(all|none|add|remove|except)\b",
          _unconverted(reason_not_supported("รายการ VLAN แบบ all/none/add/remove/except"))),
         (r"^switchport\s+trunk\s+encapsulation\s+dot1q$", _not_needed_dot1q),
+        (r"^switchport\s+nonegotiate$", _not_needed_nonegotiate),
         (r"^spanning-tree\s+portfast(\s+edge)?$", _stp_edge),
         (r"^spanning-tree\s+bpduguard\s+enable$", _not_needed_bpduguard),
         (r"^switchport\s+port-security$", _flag("port_security")),

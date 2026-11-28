@@ -146,6 +146,27 @@ class TestSystemPromptConstraints:
         assert ("NEVER invent or auto-add 'stelnet server enable' unless that exact command "
                 "is explicitly present in the source") in prompt
 
+    def test_huawei_switchport_nonegotiate_is_not_undo_negotiation(self):
+        prompt = _system_prompt(C, H)
+        assert "'switchport nonegotiate' is not needed (ไม่ต้องใช้คำสั่งนี้)" in prompt
+        assert "Huawei VRP has no DTP" in prompt
+        assert "NEVER emit 'undo negotiation auto' for it" in prompt
+
+    def test_huawei_trunk_allowed_list_vs_default_trunk(self):
+        prompt = _system_prompt(C, H)
+        assert ("when the Cisco source specifies VLANs ('switchport trunk allowed vlan 10,20,99'), "
+                "ALWAYS translate it directly to 'port trunk allow-pass vlan 10 20 99' (space-separated") in prompt
+        assert ("ONLY when a Cisco trunk port has NO 'switchport trunk allowed vlan' line at all") in prompt
+        assert "'# แนะนำ: port trunk allow-pass vlan all'" in prompt
+
+    def test_huawei_banner_delimiter_is_safe(self):
+        prompt = _system_prompt(C, H)
+        assert "if the Cisco delimiter is '#' or '^C', ALWAYS replace it with '\"'" in prompt
+        assert "'header shell information \" ... \"'" in prompt
+        assert "'#' starts a comment in Huawei VRP" in prompt
+        assert ("NEVER invent or auto-add 'stelnet server enable' unless that exact command "
+                "is explicitly present in the source") in prompt
+
     def test_cisco_target_has_no_huawei_constraints(self):
         prompt = _system_prompt(H, C)
         assert "idle-timeout" not in prompt

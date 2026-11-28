@@ -8,7 +8,7 @@ If anything here conflicts with that file, the proposal wins. Do not expand scop
 Network Configuration Conversion System for Multi-Vendor Migration.
 Bidirectional translation **Cisco IOS-XE ⇄ Huawei VRP**, **IPv4 only**. No other vendor pair.
 
-**Status: feature-complete.** Milestones 1–5 are done and **864 `pytest` tests pass**.
+**Status: feature-complete.** Milestones 1–5 are done and **869 `pytest` tests pass**.
 
 | Milestone | Delivered |
 |---|---|
@@ -93,7 +93,7 @@ Every output line carries exactly one label, in every mode (`app/core/ir.py::Pro
 | `AI` (alias `AI_REVIEW`, the same member) | `"มาจาก AI ต้องตรวจสอบก่อนใช้"` | **no** |
 | `SYSTEM` | `"ระบบสร้างขึ้นเอง"` | yes (commands only; comments are always stripped) |
 | `UNCONVERTED` | `"แปลงไม่ได้"` | **no** |
-| `NOT_NEEDED` | `"ไม่ต้องใช้คำสั่งนี้"`: the command is redundant because of a target default (e.g. `switchport trunk encapsulation dot1q` → Huawei). This is **not** the same as `"แปลงไม่ได้"`. | **no** |
+| `NOT_NEEDED` | `"ไม่ต้องใช้คำสั่งนี้"`: the command is redundant because of a target default (e.g. `switchport trunk encapsulation dot1q` → Huawei; `switchport nonegotiate` → Huawei, which has no DTP — never `undo negotiation auto`). This is **not** the same as `"แปลงไม่ได้"`. | **no** |
 
 `Provenance.deployable` returns true only for `RULE` and `SYSTEM`.
 

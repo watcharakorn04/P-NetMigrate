@@ -188,6 +188,32 @@ class TestVlan:
         assert lines[0].text.startswith("#")
         assert not [l for l in result.lines if l.provenance is Provenance.UNCONVERTED]
 
+    def test_switchport_nonegotiate_is_not_needed_never_undo_negotiation(self):
+        result = c2h("interface GigabitEthernet0/0/1\n switchport mode trunk\n switchport nonegotiate\n")
+        lines = comments_with(result, "switchport nonegotiate")
+        assert len(lines) == 1
+        assert lines[0].provenance is Provenance.NOT_NEEDED
+        assert lines[0].provenance.value == "ไม่ต้องใช้คำสั่งนี้"
+        assert lines[0].text.startswith("#")
+        assert "DTP" in lines[0].text
+        assert not any("negotiation" in t for t in commands(result))
+        assert not [l for l in result.lines if l.provenance is Provenance.UNCONVERTED]
+
+    def test_switchport_nonegotiate_never_auto_sent_to_ai_in_hybrid(self):
+        class Fake:
+            sent = []
+
+            def translate_items(self, items, source, target):  # pragma: no cover
+                Fake.sent.extend(items)
+                return {}
+
+            def translate_config(self, text, source, target):  # pragma: no cover
+                raise AssertionError
+
+        convert("interface GigabitEthernet0/0/1\n switchport mode trunk\n switchport nonegotiate\n",
+                C, H, ConversionMode.HYBRID, translator=Fake())
+        assert not Fake.sent
+
     def test_allow_pass_vlan_all_is_unconverted(self):
         result = h2c("interface GigabitEthernet0/0/1\n port link-type trunk\n port trunk allow-pass vlan all\n")
         assert not any("switchport trunk allowed vlan" in t for t in commands(result))
