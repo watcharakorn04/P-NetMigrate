@@ -70,24 +70,24 @@ class TestSystemView:
 
 class TestSourceOrder:
     # line 3 (no rule) sits between the hostname (1-2) and the interface (4-5) in the source.
-    SRC = "configure terminal\nhostname SW1\nspanning-tree mode rapid-pvst\ninterface Vlan10\n ip address 10.0.0.1 255.255.255.0\nend\n"
+    SRC = "configure terminal\nhostname SW1\nspanning-tree mode mst\ninterface Vlan10\n ip address 10.0.0.1 255.255.255.0\nend\n"
 
     def test_unconverted_top_level_line_stays_in_source_position(self):
         result = c2h(self.SRC)
-        note = comments_with(result, "spanning-tree mode rapid-pvst")[0]
+        note = comments_with(result, "spanning-tree mode mst")[0]
         pos = result.lines.index(note)
         assert _index(result, "sysname SW1") < pos < _index(result, "interface Vlanif10")
 
     def test_hybrid_ai_lines_merge_in_source_order_not_appended(self):
         class Fake:
             def translate_items(self, items: list[AIItem], source, target):
-                return {i.id: ["stp mode rstp"] for i in items}
+                return {i.id: ["stp mode mstp"] for i in items}
 
             def translate_config(self, text, source, target):  # pragma: no cover
                 raise AssertionError
 
         result = convert(self.SRC, C, H, ConversionMode.HYBRID, translator=Fake())
-        ai = cmd(result, "stp mode rstp")
+        ai = cmd(result, "stp mode mstp")
         assert ai.provenance is Provenance.AI and ai.source_line == 3
         pos = result.lines.index(ai)
         assert _index(result, "system-view") < _index(result, "sysname SW1") < pos < _index(result, "interface Vlanif10")

@@ -369,6 +369,19 @@ class DhcpSnoopingIR(BaseModel):
     field_lines: dict[str, int] = Field(default_factory=dict)
 
 
+class BannerIR(BaseModel):
+    """Login / MOTD banner text (delimiters are syntax, so only a presentation hint is kept).
+
+    Cisco `banner login <d>..<d>` <-> Huawei `header login information <d>..<d>`
+    Cisco `banner motd <d>..<d>`  <-> Huawei `header shell information <d>..<d>`
+    """
+
+    kind: str  # "login" | "motd" (Huawei `shell`)
+    lines: list[str] = Field(default_factory=list)  # banner text, one entry per line, no delimiters
+    delimiter: Optional[str] = None  # source delimiter (presentation hint only, not intent)
+    source_lines: list[int] = Field(default_factory=list)
+
+
 InterfaceIR.model_rebuild()
 
 # Fields that record *where* something came from, not *what* the config means.
@@ -377,7 +390,7 @@ InterfaceIR.model_rebuild()
 # carries the intent.
 _NON_INTENT_FIELDS = {
     "source_vendor", "source_lines", "source_line", "field_lines", "warnings", "notes", "comments",
-    "sequence",
+    "sequence", "delimiter",
 }
 
 
@@ -412,6 +425,11 @@ class DeviceConfigIR(BaseModel):
     # Global BPDU protection for edge ports: Cisco `spanning-tree portfast bpduguard default`
     # <-> Huawei `stp bpdu-protection` (system view only on Huawei S-series).
     stp_bpdu_protection: Optional[bool] = None
+    # Cisco `spanning-tree mode rapid-pvst` <-> Huawei `stp mode rstp` (neutral value "rstp").
+    stp_mode: Optional[str] = None
+    # Cisco `spanning-tree portfast default` <-> Huawei `stp edged-port default`.
+    stp_edge_default: Optional[bool] = None
+    banners: list[BannerIR] = Field(default_factory=list)  # in source order
     field_lines: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     # Free-text source comments (comment-prefix translation only; not config intent).

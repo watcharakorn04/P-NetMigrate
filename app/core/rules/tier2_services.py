@@ -48,6 +48,10 @@ DHCP snooping (D global / S per VLAN):
 
 Global BPDU protection (D): spanning-tree portfast [edge] bpduguard default <-> stp bpdu-protection
   (interface-level `spanning-tree bpduguard enable` is "ไม่ต้องใช้คำสั่งนี้", see tier1_vlan)
+
+Global STP (system view, with a semantics warning in the renderer):
+  spanning-tree mode rapid-pvst     <-> stp mode rstp            (T; other modes -> no rule)
+  spanning-tree portfast default    <-> stp edged-port default   (D)
 """
 
 from __future__ import annotations
@@ -517,6 +521,31 @@ cisco_bpdu_protection = _single_line_handler(
 huawei_bpdu_protection = _single_line_handler("huawei_bpdu_protection", r"^stp\s+bpdu-protection$", _bpdu_protection)
 
 
+# ----------------------------------------------------------------------------- global STP mode / edge default
+
+
+def _stp_mode_rstp(m, block: Block, ctx: ParseContext) -> None:
+    ctx.ir.stp_mode = "rstp"
+    ctx.ir.field_lines["stp_mode"] = block.header.no
+    ctx.rule(block.header, T)
+
+
+def _stp_edge_default(m, block: Block, ctx: ParseContext) -> None:
+    ctx.ir.stp_edge_default = True
+    ctx.ir.field_lines["stp_edge_default"] = block.header.no
+    ctx.rule(block.header, D)
+
+
+cisco_stp_mode = _single_line_handler("cisco_stp_mode", r"^spanning-tree\s+mode\s+rapid-pvst$", _stp_mode_rstp)
+huawei_stp_mode = _single_line_handler("huawei_stp_mode", r"^stp\s+mode\s+rstp$", _stp_mode_rstp)
+cisco_stp_edge_default = _single_line_handler(
+    "cisco_stp_edge_default", r"^spanning-tree\s+portfast\s+(?:edge\s+)?default$", _stp_edge_default
+)
+huawei_stp_edge_default = _single_line_handler(
+    "huawei_stp_edge_default", r"^stp\s+edged-port\s+default$", _stp_edge_default
+)
+
+
 # ----------------------------------------------------------------------------- VTY / SSH
 
 _TRANSPORT_WORDS = {"ssh": {"ssh"}, "telnet": {"telnet"}, "all": {"ssh", "telnet"}}
@@ -608,9 +637,11 @@ CISCO_HANDLERS: list[BlockHandler] = [
     cisco_rip, cisco_default_gateway, cisco_ntp, cisco_syslog, cisco_vty, cisco_console,
     cisco_clock, cisco_ssh_version, cisco_ssh_timeout, cisco_ssh_retries,
     cisco_dhcp_snooping, cisco_dhcp_snooping_vlan, cisco_bpdu_protection,
+    cisco_stp_mode, cisco_stp_edge_default,
 ]
 HUAWEI_HANDLERS: list[BlockHandler] = [
     huawei_rip, huawei_ntp, huawei_syslog, huawei_vty, huawei_console, huawei_stelnet, huawei_telnet,
     huawei_clock, huawei_ssh_version, huawei_ssh_timeout, huawei_ssh_retries,
     huawei_dhcp_service, huawei_dhcp_snooping, huawei_bpdu_protection,
+    huawei_stp_mode, huawei_stp_edge_default,
 ]

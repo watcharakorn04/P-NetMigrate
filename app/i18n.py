@@ -234,6 +234,18 @@ _EXACT: dict[str, str] = {
                                     "(rsa local-key-pair create) that prompts [Y/N] and a key size and hangs "
                                     "scripts, so it was removed and is never deployed. Create the key on the "
                                     "target device yourself",
+    R.WARN_BANNER_MOTD_SHELL: "Cisco banner motd is shown before login, while Huawei header shell information is "
+                              "shown after a successful login — they are paired by rule; check the display timing "
+                              "suits your purpose",
+    R.WARN_BANNER_DELIMITER: "The original banner delimiter cannot be used on the target (it is the comment marker "
+                             "or appears in the text), so another character not found in the text was used; "
+                             "please check",
+    R.WARN_STP_RSTP: "Cisco rapid-pvst runs one RSTP instance per VLAN, but Huawei stp mode rstp runs a single "
+                     "spanning tree for all VLANs — the root bridge and blocked ports may change; check the topology",
+    R.WARN_STP_EDGE_DEFAULT: "Cisco spanning-tree portfast default applies to access ports only, but Huawei stp "
+                             "edged-port default applies to every port including trunks/uplinks — on Huawei set "
+                             "stp edged-port disable on uplink/trunk ports (the system does not add it), "
+                             "especially with stp bpdu-protection; please check",
     R.WARN_HUAWEI_VTY_RANGE:"Many Huawei models support VTY 0–4 (some up to 0–14); check the VTY range on the target",
     R.WARN_TWO_TUPLE_PORTS: "2-tuple interface numbering (e.g., 0/1) was preserved from the source — if the target "
                             "Huawei device uses 3-tuple port numbering (e.g., S5700, S6700, AR series), adjust to "

@@ -25,6 +25,7 @@ from app.core.ir import ConversionMode, DeviceConfigIR, Provenance, RenderedLine
 from app.core.parsers import ParseResult, parse_config
 from app.core.renderers import render_config
 from app.core.renderers.common import WARN_TWO_TUPLE_PORTS
+from app.core.renderers.huawei_vrp import order_global_dhcp_snooping
 from app.core.rules.interface_names import is_virtual
 from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
 from app.core.rules.tier1_system import is_huawei_system_view
@@ -454,7 +455,7 @@ def _run_jobs(result: ConversionResult, jobs: list[_Job], translator: Translator
 # ----------------------------------------------------------------------------- public API
 
 
-def convert(
+def _convert(
     raw: str,
     source_vendor: Vendor,
     target_vendor: Vendor,
@@ -508,7 +509,7 @@ def convert(
     return result
 
 
-def convert_selected(
+def _convert_selected(
     raw: str,
     source_vendor: Vendor,
     target_vendor: Vendor,
@@ -528,3 +529,35 @@ def convert_selected(
         result.notices.append(NOTICE_NO_SELECTION)
         return result
     return _run_jobs(result, jobs, translator)
+
+
+def _finalize(result: ConversionResult) -> ConversionResult:
+    """Final assembly checks that hold for every mode (rule, hybrid, ai_only, user-selected)."""
+    if result.target_vendor is Vendor.HUAWEI_VRP:
+        result.lines = order_global_dhcp_snooping(result.lines)
+    return result
+
+
+def convert(
+    raw: str,
+    source_vendor: Vendor,
+    target_vendor: Vendor,
+    mode: ConversionMode = ConversionMode.RULE_ONLY,
+    ai_available: Optional[bool] = None,
+    translator: Optional[Translator] = None,
+    complex_commands: Sequence[str] = (),
+) -> ConversionResult:
+    """Convert one configuration (see `_convert`), then apply the final assembly checks."""
+    return _finalize(_convert(raw, source_vendor, target_vendor, mode, ai_available, translator, complex_commands))
+
+
+def convert_selected(
+    raw: str,
+    source_vendor: Vendor,
+    target_vendor: Vendor,
+    line_numbers: Iterable[int],
+    translator: Optional[Translator],
+) -> ConversionResult:
+    """Send only user-picked "แปลงไม่ได้" lines to AI (see `_convert_selected`), then apply the
+    final assembly checks."""
+    return _finalize(_convert_selected(raw, source_vendor, target_vendor, line_numbers, translator))

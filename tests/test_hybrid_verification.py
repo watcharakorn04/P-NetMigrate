@@ -57,7 +57,7 @@ class FakeAI:
 
 
 class TestNoDuplicateSystemView:
-    SRC = "configure terminal\nhostname SW1\nspanning-tree mode rapid-pvst\nend\n"
+    SRC = "configure terminal\nhostname SW1\nspanning-tree mode mst\nend\n"
 
     def test_prompt_limits_system_view_to_full_file(self):
         prompt = _system_prompt(C, H)
@@ -69,8 +69,8 @@ class TestNoDuplicateSystemView:
     @pytest.mark.parametrize(
         "answer",
         [
-            ["system-view", "stp mode rstp", "return"],
-            ["sys", "stp mode rstp", "Return"],
+            ["system-view", "stp mode mstp", "return"],
+            ["sys", "stp mode mstp", "Return"],
         ],
     )
     def test_hybrid_strips_ai_system_view_and_return(self, answer):
@@ -79,26 +79,26 @@ class TestNoDuplicateSystemView:
         assert out[0] == "system-view"
         assert sum(1 for c in out if c in ("system-view", "sys")) == 1
         assert [c.lower() for c in out].count("return") == 1 and out[-1] == "return"
-        ai = cmd(result, "stp mode rstp")
+        ai = cmd(result, "stp mode mstp")
         assert ai.provenance is Provenance.AI
         assert _index(result, "sysname SW1") < result.lines.index(ai) < _index(result, "return")
 
     def test_selected_lines_are_stripped_too(self):
-        result = convert_selected(self.SRC, C, H, [3], FakeAI(["system-view", "stp mode rstp", "return"]))
+        result = convert_selected(self.SRC, C, H, [3], FakeAI(["system-view", "stp mode mstp", "return"]))
         out = commands(result)
         assert out.count("system-view") == 1 and out.count("return") == 1 and out[-1] == "return"
-        assert has_cmd(result, "stp mode rstp")
+        assert has_cmd(result, "stp mode mstp")
 
     def test_answer_left_empty_keeps_unconverted_label(self):
         result = convert(self.SRC, C, H, HYBRID, translator=FakeAI(["system-view", "return"]))
-        note = comments_with(result, "spanning-tree mode rapid-pvst")[0]
+        note = comments_with(result, "spanning-tree mode mst")[0]
         assert note.provenance is Provenance.UNCONVERTED
         assert [i.line_no for i in result.unconverted_items] == [3]
         assert not any(l.provenance is Provenance.AI for l in result.lines)
 
     def test_return_stripped_even_without_system_view_in_source(self):
-        result = convert("hostname SW1\nspanning-tree mode rapid-pvst\n", C, H, HYBRID,
-                         translator=FakeAI(["stp mode rstp", "return"]))
+        result = convert("hostname SW1\nspanning-tree mode mst\n", C, H, HYBRID,
+                         translator=FakeAI(["stp mode mstp", "return"]))
         out = commands(result)
         assert out.count("return") == 1 and out[-1] == "return"
 
@@ -111,9 +111,9 @@ class TestNoDuplicateSystemView:
         assert commands(result) == ["system-view", "sysname SW1", "return"]
 
     def test_cisco_target_is_not_filtered(self):
-        src = "system-view\nsysname R1\nstp mode rstp\nreturn\n"
-        result = convert(src, H, C, HYBRID, translator=FakeAI(["spanning-tree mode rapid-pvst"]))
-        assert has_cmd(result, "spanning-tree mode rapid-pvst")
+        src = "system-view\nsysname R1\nstp mode mstp\nreturn\n"
+        result = convert(src, H, C, HYBRID, translator=FakeAI(["spanning-tree mode mst"]))
+        assert has_cmd(result, "spanning-tree mode mst")
 
 
 # ----------------------------------------------------------------------------- 2. logging synchronous

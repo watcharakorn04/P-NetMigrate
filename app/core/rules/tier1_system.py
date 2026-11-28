@@ -15,6 +15,10 @@
   logging synchronous (top level or inside  -> "ไม่ต้องใช้คำสั่งนี้" (VRP does not interrupt
     any line block, even an unclaimed one)      typed CLI input with logs by default)
   "!" comment                             <-> "#" comment             (D, comment prefix)
+  banner login <d>text<d>                 <-> header login information <d>text<d>   (T)
+  banner motd <d>text<d>                  <-> header shell information <d>text<d>   (T)
+                                              (never `header banner ...`; multi-line text is
+                                              kept line by line; other banner kinds -> no rule)
 
 Mode-navigation and save lines are not configuration intent: they are recorded only in
 `DeviceConfigIR.field_lines` (excluded from IR round-trip comparison).
@@ -25,8 +29,17 @@ from __future__ import annotations
 import re
 from typing import Callable, Optional
 
-from app.core.ir import SyntaxCategory, Vendor
-from app.core.rules.base import REASON_NO_RULE, Block, BlockHandler, Line, ParseContext
+from app.core.ir import BannerIR, SyntaxCategory, Vendor
+from app.core.rules.base import (
+    REASON_BAD_VALUE,
+    REASON_NO_RULE,
+    Block,
+    BlockHandler,
+    Line,
+    LineKind,
+    LineStatus,
+    ParseContext,
+)
 
 D, T = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM
 
@@ -171,5 +184,90 @@ huawei_system = _system_handler(
     ],
 )
 
-CISCO_HANDLERS: list[BlockHandler] = [cisco_system]
-HUAWEI_HANDLERS: list[BlockHandler] = [huawei_system]
+# ----------------------------------------------------------------------------- banners
+
+_CISCO_BANNER = re.compile(r"^banner\s+(motd|login)\s+(\S.*)$", re.IGNORECASE)
+_HUAWEI_BANNER = re.compile(r"^header\s+(shell|login)\s+information\s+(\S.*)$", re.IGNORECASE)
+_BANNER_KIND = {"motd": "motd", "login": "login", "shell": "motd"}
+
+
+def _banner_match(body: str, vendor: Vendor) -> Optional[re.Match[str]]:
+    return (_CISCO_BANNER if vendor is Vendor.CISCO_IOS_XE else _HUAWEI_BANNER).match(body)
+
+
+def _split_delimiter(rest: str) -> tuple[str, str]:
+    """`rest` starts at the delimiter. `^C` (how IOS shows the ETX character) is one delimiter."""
+    if rest.startswith("^C"):
+        return "^C", rest[2:]
+    return rest[0], rest[1:]
+
+
+def banner_open(body: str, vendor: Vendor) -> Optional[str]:
+    """Delimiter of a banner whose text continues on the next lines; None if it is not a
+    banner or the banner closes on its own line. Used by the parser to keep the text lines
+    (which may look like comments or commands) together with the banner header."""
+    m = _banner_match(body, vendor)
+    if not m:
+        return None
+    delimiter, remainder = _split_delimiter(m[2])
+    return None if delimiter in remainder else delimiter
+
+
+def banner_closes(text: str, delimiter: str) -> bool:
+    return delimiter in text
+
+
+def _banner_handler(name: str, vendor: Vendor) -> BlockHandler:
+    def handler(block: Block, ctx: ParseContext) -> bool:
+        m = _banner_match(block.header.body, vendor)
+        if not m:
+            return False
+        delimiter, remainder = _split_delimiter(m[2])
+        texts: list[str] = []
+        closed = False
+        if delimiter in remainder:
+            head, tail = remainder.split(delimiter, 1)
+            texts.append(head)
+            closed = not tail.strip()
+        else:
+            texts.append(remainder)
+            for child in block.children:
+                if delimiter in child.header.body:
+                    head, tail = child.header.body.split(delimiter, 1)
+                    texts.append(head)
+                    closed = not tail.strip() and child is block.children[-1]
+                    break
+                texts.append(child.header.body)
+        if not closed:
+            ctx.unconverted_block(block, REASON_BAD_VALUE, ctx.ir.notes)
+            return True
+        # A delimiter on its own line leaves an empty first/last entry, not banner text.
+        if block.children and not texts[0].strip():
+            texts = texts[1:]
+        if block.children and texts and not texts[-1].strip():
+            texts = texts[:-1]
+        ctx.ir.banners.append(
+            BannerIR(
+                kind=_BANNER_KIND[m[1].lower()],
+                lines=[t.rstrip() for t in texts],
+                delimiter=delimiter if len(delimiter) == 1 else None,
+                source_lines=[l.no for l in block.lines()],
+            )
+        )
+        ctx.rule(block.header, T)
+        for child in block.children:
+            if child.header.body.strip():
+                ctx.rule(child.header, T)
+            else:
+                ctx.status[child.header.no] = LineStatus(LineKind.IGNORED, "")
+        return True
+
+    handler.__name__ = name
+    return handler
+
+
+cisco_banner = _banner_handler("cisco_banner", Vendor.CISCO_IOS_XE)
+huawei_banner = _banner_handler("huawei_banner", Vendor.HUAWEI_VRP)
+
+CISCO_HANDLERS: list[BlockHandler] = [cisco_system, cisco_banner]
+HUAWEI_HANDLERS: list[BlockHandler] = [huawei_system, huawei_banner]

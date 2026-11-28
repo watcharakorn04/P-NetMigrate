@@ -22,11 +22,14 @@ from app.core.renderers.common import (
     WARN_DHCP_ENABLE,
     WARN_DHCP_SNOOPING_VLAN_UNDECLARED,
     WARN_STELNET,
+    WARN_STP_EDGE_DEFAULT,
+    WARN_STP_RSTP,
     LineWriter,
     acl_default_action_warning,
     hdlc_warning,
     huawei_import_route,
     interface_warnings,
+    render_banner,
     trunk_warning,
 )
 from app.core.rules.interface_names import display_name
@@ -273,6 +276,12 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"clock timezone {tz.name} {format_huawei_timezone(tz.offset_minutes)}", T, tz.source_line)
     if ir.stp_bpdu_protection:  # system view only — never inside interface / port-group views
         w.cmd("stp bpdu-protection", D, ir.field_lines.get("stp_bpdu_protection"))
+    if ir.stp_mode == "rstp":
+        w.cmd("stp mode rstp", T, ir.field_lines.get("stp_mode"), WARN_STP_RSTP)
+    if ir.stp_edge_default:
+        w.cmd("stp edged-port default", D, ir.field_lines.get("stp_edge_default"), WARN_STP_EDGE_DEFAULT)
+    for banner in ir.banners:
+        render_banner(w, banner)
     w.separator()
 
     for vlan in ir.vlans:
@@ -280,8 +289,9 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         if vlan.name:
             w.cmd(f" description {vlan.name}", D, vlan.field_lines.get("name"))
         w.notes(vlan.notes)
-        if "exit" in vlan.field_lines:
-            w.exit_view(vlan.field_lines["exit"])
+        # Every VLAN view is closed with `quit`, written by the source or not, so consecutive
+        # VLAN blocks never run into each other (same shape as the DHCP snooping VLAN blocks).
+        w.exit_view(vlan.field_lines.get("exit", _first(vlan.source_lines)))
         w.separator()
 
     if ir.dhcp_snooping:
@@ -335,3 +345,65 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
     if "save" in ir.field_lines:  # after return: `save` is a user-view command
         w.cmd("save force", T, ir.field_lines["save"], WARN_SAVE_FORCE)
     return w.lines
+
+
+# ----------------------------------------------------------------------------- final assembly
+
+_VIEW_HEADER = re.compile(
+    r"^(interface|port-group|vlan|ospf|rip|bgp|acl|user-interface|aaa|isis|ip\s+vpn-instance)\b", re.IGNORECASE
+)
+_IFACE_HEADER = re.compile(r"^(interface|port-group)\b", re.IGNORECASE)
+_VLAN_HEADER = re.compile(r"^vlan\s+\d+$", re.IGNORECASE)
+
+
+def order_global_dhcp_snooping(lines: list[RenderedLine]) -> list[RenderedLine]:
+    """Huawei rejects `dhcp snooping trusted` until global `dhcp snooping enable` is set.
+
+    The renderer already writes DHCP snooping before the interfaces; AI output (ai_only, or
+    gap fills placed in source order) may not. When a global (system-view) `dhcp snooping
+    enable` comes after an interface / port-group block that contains `dhcp snooping
+    trusted`, move it, with the `dhcp enable` advisory or command right before it, in front
+    of the first interface / port-group block. Per-VLAN ` dhcp snooping enable` is never moved.
+    """
+    marker = H.comment_marker
+
+    def is_top(line: RenderedLine) -> bool:
+        return not line.is_comment and not line.text[:1].isspace()
+
+    first_iface = first_trusted = global_idx = None
+    current_iface = None  # index of the interface/port-group block we are in
+    in_vlan = False
+    for i, line in enumerate(lines):
+        text = line.text.strip().lower()
+        if line.is_comment:
+            if line.text.strip() == marker:
+                in_vlan, current_iface = False, None
+            continue
+        if is_top(line) and _VIEW_HEADER.match(text):
+            in_vlan = bool(_VLAN_HEADER.match(text))
+            current_iface = i if _IFACE_HEADER.match(text) else None
+            if current_iface is not None and first_iface is None:
+                first_iface = i
+            continue
+        if text == "quit":
+            in_vlan, current_iface = False, None
+            continue
+        if text == "dhcp snooping trusted" and current_iface is not None and first_trusted is None:
+            first_trusted = current_iface
+        if text == "dhcp snooping enable" and is_top(line) and not in_vlan and current_iface is None:
+            global_idx = i
+            break
+    if global_idx is None or first_trusted is None or first_iface is None or global_idx < first_trusted:
+        return lines
+
+    start = global_idx
+    while start - 1 > first_iface:
+        prev = lines[start - 1]
+        text = prev.text.strip().lower()
+        if (prev.is_comment and text != marker and "dhcp enable" in text) or (is_top(prev) and text == "dhcp enable"):
+            start -= 1
+        else:
+            break
+    moved = lines[start:global_idx + 1]
+    rest = lines[:start] + lines[global_idx + 1:]
+    return rest[:first_iface] + moved + rest[first_iface:]

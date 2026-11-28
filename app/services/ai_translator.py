@@ -170,6 +170,15 @@ _TARGET_EXTRA_RULES = {
         "'dhcp snooping enable vlan ...'.\n"
         "- 'switchport port-security maximum <n>' -> 'port-security max-mac-num <n>' "
         "(never 'port-security max-mac-number').\n"
+        "- Emit the global 'dhcp snooping enable' (system view, together with the 'dhcp enable' advice) "
+        "BEFORE any 'interface' or 'port-group' block that contains 'dhcp snooping trusted'; Huawei VRP "
+        "rejects 'dhcp snooping trusted' while global DHCP snooping is not enabled yet.\n"
+        "- Banners: 'banner login <d>text<d>' -> 'header login information <d>text<d>' and "
+        "'banner motd <d>text<d>' -> 'header shell information <d>text<d>', keeping the text unchanged. "
+        "Never emit 'header banner ...' (it does not exist on Huawei VRP).\n"
+        "- Global STP: 'spanning-tree mode rapid-pvst' -> 'stp mode rstp'; "
+        "'spanning-tree portfast default' -> 'stp edged-port default' (both in system view).\n"
+        "- Close every 'vlan <id>' block with 'quit'.\n"
     ),
     Vendor.CISCO_IOS_XE: "",
 }

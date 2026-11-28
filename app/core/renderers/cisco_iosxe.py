@@ -5,6 +5,8 @@ from __future__ import annotations
 from app.core.ir import AclRefIR, DeviceConfigIR, InterfaceIR, Provenance, RenderedLine, SyntaxCategory, Vendor
 from app.core.renderers.common import (
     WARN_WRITE_MEMORY,
+    WARN_STP_EDGE_DEFAULT,
+    WARN_STP_RSTP,
     interface_header,
     WARN_ACL_NUMBER_ASSIGNED,
     WARN_CISCO_SSH,
@@ -15,6 +17,7 @@ from app.core.renderers.common import (
     cisco_redistribute,
     hdlc_warning,
     interface_warnings,
+    render_banner,
     rip_pid_warning,
     trunk_warning,
 )
@@ -218,6 +221,12 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"clock timezone {tz.name} {format_cisco_timezone(tz.offset_minutes)}", T, tz.source_line)
     if ir.stp_bpdu_protection:
         w.cmd("spanning-tree portfast bpduguard default", D, ir.field_lines.get("stp_bpdu_protection"))
+    if ir.stp_mode == "rstp":
+        w.cmd("spanning-tree mode rapid-pvst", T, ir.field_lines.get("stp_mode"), WARN_STP_RSTP)
+    if ir.stp_edge_default:
+        w.cmd("spanning-tree portfast default", D, ir.field_lines.get("stp_edge_default"), WARN_STP_EDGE_DEFAULT)
+    for banner in ir.banners:
+        render_banner(w, banner)
     w.separator()
 
     for vlan in ir.vlans:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from app.core.ir import AclIR, InterfaceIR, InterfaceRef, NoteIR, Provenance, RedistributeIR, RenderedLine, SyntaxCategory, Vendor
+from app.core.ir import AclIR, BannerIR, InterfaceIR, InterfaceRef, NoteIR, Provenance, RedistributeIR, RenderedLine, SyntaxCategory, Vendor
 from app.core.rules import interface_names
 
 D = SyntaxCategory.DIRECT
@@ -201,6 +201,57 @@ WARN_TWO_TUPLE_PORTS = (
     "ระบบคงหมายเลขพอร์ต 2 หลักตามต้นฉบับ (เช่น 0/1) — หากอุปกรณ์ปลายทางเป็นสวิตช์หรือเราเตอร์ Huawei "
     "รุ่นที่ใช้พอร์ต 3 หลัก (เช่น S5700, S6700, AR) กรุณาปรับเป็นรูปแบบ 0/0/1 ก่อนนำไปใช้งาน"
 )
+
+
+WARN_BANNER_MOTD_SHELL = (
+    "Cisco banner motd แสดงก่อนการ Login ส่วน Huawei header shell information แสดงหลัง Login สำเร็จ "
+    "— ระบบแปลงคู่กันตามกฎ กรุณาตรวจสอบว่าเวลาแสดงข้อความตรงกับที่ต้องการ"
+)
+WARN_BANNER_DELIMITER = (
+    "อักขระคั่นข้อความ Banner เดิมใช้บนอุปกรณ์ปลายทางไม่ได้ (เป็นเครื่องหมาย Comment หรือปรากฏในข้อความ) "
+    "ระบบจึงเปลี่ยนเป็นอักขระอื่นที่ไม่อยู่ในข้อความ กรุณาตรวจสอบ"
+)
+WARN_STP_RSTP = (
+    "Cisco rapid-pvst รัน RSTP แยกต่อ VLAN แต่ Huawei stp mode rstp รัน Spanning Tree เดียวสำหรับทุก VLAN "
+    "— Root Bridge และพอร์ตที่ถูก Block อาจเปลี่ยน กรุณาตรวจสอบ Topology"
+)
+WARN_STP_EDGE_DEFAULT = (
+    "Cisco spanning-tree portfast default มีผลเฉพาะพอร์ต Access แต่ Huawei stp edged-port default มีผลกับทุกพอร์ต "
+    "รวมถึง Trunk/Uplink — บน Huawei ควรตั้ง stp edged-port disable ที่พอร์ต Uplink/Trunk (ระบบไม่เติมให้เอง) "
+    "โดยเฉพาะเมื่อเปิด stp bpdu-protection กรุณาตรวจสอบ"
+)
+
+# Banner delimiters that are safe on each target (never the target's comment marker).
+_BANNER_DELIMITERS = {
+    Vendor.HUAWEI_VRP: ('"', "%", "@", "~", "$", "&"),
+    Vendor.CISCO_IOS_XE: ("#", "%", "@", "~", "$", "&", '"'),
+}
+_BANNER_HEADERS = {
+    (Vendor.HUAWEI_VRP, "login"): "header login information",
+    (Vendor.HUAWEI_VRP, "motd"): "header shell information",
+    (Vendor.CISCO_IOS_XE, "login"): "banner login",
+    (Vendor.CISCO_IOS_XE, "motd"): "banner motd",
+}
+
+
+def render_banner(w: LineWriter, banner: BannerIR) -> None:
+    """`<header> <d>first line` ... `last line<d>` (one line: `<header> <d>text<d>`), the
+    display format both vendors read back. The source delimiter is kept when it is safe."""
+    text = "\n".join(banner.lines)
+    delimiter, warn = banner.delimiter, None
+    if not delimiter or delimiter == w.marker or delimiter in text:
+        candidates = [d for d in _BANNER_DELIMITERS[w.target] if d not in text]
+        delimiter = candidates[0] if candidates else _BANNER_DELIMITERS[w.target][0]
+        warn = WARN_BANNER_DELIMITER if banner.delimiter else None
+    if banner.kind == "motd":
+        warn = " | ".join(x for x in (warn, WARN_BANNER_MOTD_SHELL) if x)
+    src = banner.source_lines[0] if banner.source_lines else None
+    header = _BANNER_HEADERS[(w.target, banner.kind)]
+    body = banner.lines or [""]
+    texts = [f"{header} {delimiter}{body[0]}", *body[1:]]
+    texts[-1] += delimiter
+    for i, t in enumerate(texts):
+        w.cmd(t, SyntaxCategory.TRANSFORM, src, warn if i == 0 else None)
 
 
 def cisco_redistribute(r: RedistributeIR, into: str) -> str:

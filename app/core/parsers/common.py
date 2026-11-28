@@ -7,7 +7,7 @@ is what the pre-scan analyzer reports and what the mode engine uses for AI fallb
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Union
+from typing import Iterable, Optional, Union
 
 from app.core.ir import DeviceConfigIR, NoteIR, Provenance, Vendor
 from app.core.rules.base import (
@@ -24,7 +24,7 @@ from app.core.rules.base import (
     out_of_scope_feature,
     reason_out_of_scope,
 )
-from app.core.rules.tier1_system import cisco_not_needed_reason, comment_body
+from app.core.rules.tier1_system import banner_closes, banner_open, cisco_not_needed_reason, comment_body
 from app.core.secret_stripper import contains_secret
 
 # Either raw text, or (original_line_no, text) pairs left after strip_secrets.
@@ -44,11 +44,46 @@ def _numbered(source: Source) -> list[tuple[int, str]]:
     return list(source)
 
 
+def _banner_text_lines(numbered: list[tuple[int, str]], start: int, delimiter: str) -> Optional[list[tuple[int, str]]]:
+    """Lines after a multi-line banner header up to (and including) the closing delimiter.
+    None when the banner is never closed: the header is then left alone (-> unconverted)
+    instead of swallowing the rest of the file."""
+    out: list[tuple[int, str]] = []
+    for no, raw in numbered[start + 1:]:
+        text = raw.expandtabs(4).rstrip()
+        out.append((no, text))
+        if banner_closes(text, delimiter):
+            return out
+    return None
+
+
 def _build_tree(source: Source, ctx: ParseContext) -> list[Block]:
     entries: list[tuple[int, str, int]] = []  # (line_no, body, indent)
-    for no, raw in _numbered(source):
+    banner_children: dict[int, list[tuple[int, str]]] = {}  # banner header line -> text lines
+    numbered = _numbered(source)
+    skip_until = -1
+    for idx, (no, raw) in enumerate(numbered):
+        if idx <= skip_until:
+            continue
         text = raw.expandtabs(4).rstrip()
         body = text.strip()
+        delimiter = banner_open(body, ctx.vendor) if body else None
+        if delimiter is not None and not contains_secret(body):
+            # Banner text is free text: keep it verbatim (even lines that look like `!`/`#`
+            # comments or commands). Credential lines were already removed by strip_secrets;
+            # a remaining one is never stored.
+            text_lines = _banner_text_lines(numbered, idx, delimiter)
+            if text_lines is not None:
+                kept = []
+                for child_no, child_text in text_lines:
+                    if contains_secret(child_text):
+                        ctx.status[child_no] = LineStatus(LineKind.IGNORED, "")
+                    else:
+                        kept.append((child_no, child_text))
+                banner_children[no] = kept
+                skip_until = idx + len(text_lines)
+                entries.append((no, body, len(text) - len(text.lstrip())))
+                continue
         # Defence in depth: callers should strip_secrets first; a credential line that slips
         # through is never stored anywhere (not even as a note) so it cannot reach output.
         if not body or contains_secret(body):
@@ -72,6 +107,12 @@ def _build_tree(source: Source, ctx: ParseContext) -> list[Block]:
         while stack and stack[-1].header.indent >= node.header.indent:
             stack.pop()
         (stack[-1].children if stack else roots).append(node)
+        if no in banner_children:
+            # Body keeps the text verbatim (leading spaces are part of the banner). The banner
+            # is closed, so it never becomes the parent of the lines that follow it.
+            for child_no, child_text in banner_children[no]:
+                node.children.append(Block(Line(no=child_no, indent=node.header.indent + 1, body=child_text)))
+            continue
         stack.append(node)
     return _attach_trailing_exits(roots, ctx.vendor)
 
@@ -83,7 +124,8 @@ def _attach_trailing_exits(roots: list[Block], vendor: Vendor) -> list[Block]:
     word = exit_word(vendor)
     out: list[Block] = []
     for root in roots:
-        if out and out[-1].children and not root.children and root.header.body.lower() == word:
+        if (out and out[-1].children and not root.children and root.header.body.lower() == word
+                and banner_open(out[-1].header.body, vendor) is None):
             root.header.indent = out[-1].children[0].header.indent
             out[-1].children.append(root)
         else:
