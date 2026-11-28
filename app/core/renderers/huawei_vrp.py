@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from app.core.ir import AclRefIR, DeviceConfigIR, InterfaceIR, Provenance, RenderedLine, SyntaxCategory, Vendor
 from app.core.renderers.common import (
@@ -24,6 +25,11 @@ from app.core.renderers.common import (
     WARN_STELNET,
     WARN_STP_EDGE_DEFAULT,
     WARN_STP_RSTP,
+    WARN_ETH_TRUNK_MEMBER,
+    WARN_HSRP_TO_VRRP,
+    WARN_STP_ROOT_SINGLE_INSTANCE,
+    WARN_VOICE_VLAN_HYBRID,
+    WARN_VRRP_NO_VIRTUAL_IP,
     LineWriter,
     acl_default_action_warning,
     hdlc_warning,
@@ -76,6 +82,10 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
     w.cmd(interface_header(iface, H), D, iface.source_lines[0], interface_warnings(iface, name))
     if iface.description:
         w.cmd(f" description {iface.description}", D, fl.get("description"))
+    if iface.lacp_static:
+        w.cmd(" mode lacp-static", S, fl.get("lacp_static"))
+    if iface.channel_group is not None:
+        w.cmd(f" eth-trunk {iface.channel_group}", S, fl.get("channel_group"), WARN_ETH_TRUNK_MEMBER)
     if iface.link_protocol:
         warn = hdlc_warning(name) if iface.link_protocol == "hdlc" else None
         w.cmd(f" link-protocol {iface.link_protocol}", D, fl.get("link_protocol"), warn)
@@ -87,6 +97,8 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
             w.advisory(ADVISORY_TRUNK_ALLOW_ALL, fl.get("port_mode"))
     if iface.access_vlan is not None:
         w.cmd(f" port default vlan {iface.access_vlan}", D, fl.get("access_vlan"))
+    if iface.voice_vlan is not None:
+        w.cmd(f" voice-vlan {iface.voice_vlan} enable", D, fl.get("voice_vlan"), WARN_VOICE_VLAN_HYBRID)
     if iface.trunk_allowed_vlans:
         vlans = format_huawei_vlan_list(iface.trunk_allowed_vlans)
         w.cmd(f" port trunk allow-pass vlan {vlans}", T, fl.get("trunk_allowed_vlans"))
@@ -103,8 +115,13 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
         w.cmd(" port-security mac-address sticky", D, fl.get("port_security_sticky"))
     if iface.dhcp_snooping_trusted:
         w.cmd(" dhcp snooping trusted", D, fl.get("dhcp_snooping_trusted"))
+    for storm in iface.storm_control:
+        # Always `percent`: bare min-rate/max-rate numbers are packets per second on VRP.
+        w.cmd(f" storm-control {storm.traffic} min-rate percent {storm.min_percent} "
+              f"max-rate percent {storm.max_percent}", T, storm.source_line)
     if iface.ipv4:
         w.cmd(f" ip address {iface.ipv4.ip} {iface.ipv4.netmask}", D, fl.get("ipv4"))
+    _render_vrrp(w, iface)  # after `ip address`: the virtual IP must sit in the interface subnet
     if iface.ospf_network_p2p:
         w.cmd(" ospf network-type p2p", D, fl.get("ospf_network_p2p"))
     if iface.ospf_cost is not None:
@@ -124,11 +141,45 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
     w.separator()
 
 
+def _render_vrrp(w: LineWriter, iface: InterfaceIR) -> None:
+    for g in iface.vrrp_groups:
+        warnings = [WARN_HSRP_TO_VRRP if g.protocol == "hsrp" else None,
+                    WARN_VRRP_NO_VIRTUAL_IP if g.virtual_ip is None else None]
+        first_warn = " | ".join(x for x in warnings if x) or None
+        lines: list[tuple[str, Optional[int]]] = []
+        if g.virtual_ip is not None:  # the group must exist before priority / track
+            lines.append((f" vrrp vrid {g.vrid} virtual-ip {g.virtual_ip}", g.field_lines.get("virtual_ip")))
+        if g.priority is not None:
+            lines.append((f" vrrp vrid {g.vrid} priority {g.priority}", g.field_lines.get("priority")))
+        for t in g.tracks:
+            # Interface tracking lives inside the VRRP group: never a standalone `bfd track` in system-view.
+            lines.append((f" vrrp vrid {g.vrid} track interface {display_name(t.interface, H)} reduced {t.decrement}",
+                          t.source_line))
+        for i, (text, src) in enumerate(lines):
+            w.cmd(text, T, src, first_warn if i == 0 else None)
+
+
+def _ordered_interfaces(ir: DeviceConfigIR) -> list[InterfaceIR]:
+    """Interfaces in IR order, except that every `interface Eth-Trunk<id>` comes before the
+    first member that binds `eth-trunk <id>` (Huawei rejects binding to a missing trunk)."""
+    out = list(ir.interfaces)
+    for trunk in [i for i in ir.interfaces if i.if_type == "eth-trunk" and i.range_end is None]:
+        members = [k for k, i in enumerate(out) if i.channel_group is not None and str(i.channel_group) == trunk.number]
+        if members and out.index(trunk) > members[0]:
+            out.remove(trunk)
+            out.insert(members[0], trunk)
+    return out
+
+
 def _render_ospf(w: LineWriter, ir: DeviceConfigIR) -> None:
     ospf = ir.ospf
     src, fl = _first(ospf.source_lines), ospf.field_lines
     header = f"ospf {ospf.process_id}" + (f" router-id {ospf.router_id}" if ospf.router_id else "")
     w.cmd(header, S, src)
+    if ospf.silent_all:
+        w.cmd(" silent-interface all", S, fl.get("silent_all"))
+    for ref in ospf.non_silent_interfaces:
+        w.cmd(f" undo silent-interface {display_name(ref, H)}", S, fl.get(f"non_silent {ref.if_type}{ref.number}"))
     for ref in ospf.silent_interfaces:
         w.cmd(f" silent-interface {display_name(ref, H)}", S, src)
     if ospf.default_originate:
@@ -280,6 +331,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd("stp mode rstp", T, ir.field_lines.get("stp_mode"), WARN_STP_RSTP)
     if ir.stp_edge_default:
         w.cmd("stp edged-port default", D, ir.field_lines.get("stp_edge_default"), WARN_STP_EDGE_DEFAULT)
+    if ir.stp_root:  # single RSTP instance: never a `vlan` parameter
+        w.cmd(f"stp root {ir.stp_root}", T, ir.field_lines.get("stp_root"), WARN_STP_ROOT_SINGLE_INSTANCE)
     for banner in ir.banners:
         render_banner(w, banner)
     w.separator()
@@ -299,7 +352,7 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
 
     _render_acls(w, ir)  # before interfaces: traffic-filter references them
 
-    for iface in ir.interfaces:
+    for iface in _ordered_interfaces(ir):
         _render_interface(w, ir, iface)
 
     if ir.ospf:
@@ -333,7 +386,9 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"ntp-service unicast-server {server.address}", D, server.source_line)
     for host in ir.syslog_hosts:
         w.cmd(f"info-center loghost {host.address}", D, host.source_line)
-    if ir.ntp_servers or ir.syslog_hosts:
+    if ir.syslog_source:  # never `info-center source <if>` (that configures log channels)
+        w.cmd(f"info-center loghost source {display_name(ir.syslog_source, H)}", D, ir.field_lines.get("syslog_source"))
+    if ir.ntp_servers or ir.syslog_hosts or ir.syslog_source:
         w.separator()
 
     if ir.ssh_server:
@@ -407,3 +462,56 @@ def order_global_dhcp_snooping(lines: list[RenderedLine]) -> list[RenderedLine]:
     moved = lines[start:global_idx + 1]
     rest = lines[:start] + lines[global_idx + 1:]
     return rest[:first_iface] + moved + rest[first_iface:]
+
+
+_ETH_TRUNK_HEADER = re.compile(r"^interface\s+eth-trunk\s*(\d+)$", re.IGNORECASE)
+_ETH_TRUNK_BIND = re.compile(r"^eth-trunk\s+(\d+)$", re.IGNORECASE)
+
+
+def _block_end(lines: list[RenderedLine], start: int) -> int:
+    """Index just past the view block starting at `start` (its trailing `quit` and separator included)."""
+    marker = H.comment_marker
+    j = start + 1
+    while j < len(lines):
+        line, text = lines[j], lines[j].text.strip()
+        if line.is_comment:
+            if text == marker:
+                return j + 1
+        elif not line.text[:1].isspace():
+            return j + 1 if text.lower() == "quit" else j
+        j += 1
+    return j
+
+
+def order_eth_trunk(lines: list[RenderedLine]) -> list[RenderedLine]:
+    """`interface Eth-Trunk<id>` must exist before a member binds `eth-trunk <id>`.
+
+    The renderer already orders its own output; AI output (ai_only, or gap fills placed in
+    source order) may not. Move each Eth-Trunk block in front of the first interface /
+    port-group block that binds it.
+    """
+    for _ in range(len(lines)):
+        current = None  # start of the interface / port-group block we are in
+        first_member: dict[str, int] = {}
+        trunks: dict[str, int] = {}
+        for i, line in enumerate(lines):
+            if line.is_comment:
+                continue
+            text = line.text.strip()
+            if not line.text[:1].isspace():
+                current = i if _IFACE_HEADER.match(text) else None
+                if m := _ETH_TRUNK_HEADER.match(text):
+                    trunks.setdefault(str(int(m[1])), i)
+            elif current is not None and (m := _ETH_TRUNK_BIND.match(text)):
+                first_member.setdefault(str(int(m[1])), current)
+        misplaced = [(tid, start) for tid, start in trunks.items()
+                     if first_member.get(tid) is not None and first_member[tid] < start]
+        if not misplaced:
+            return lines
+        trunk_id, start = misplaced[0]
+        member = first_member[trunk_id]
+        end = _block_end(lines, start)
+        block = lines[start:end]
+        rest = lines[:start] + lines[end:]
+        lines = rest[:member] + block + rest[member:]
+    return lines

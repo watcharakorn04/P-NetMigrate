@@ -220,6 +220,36 @@ WARN_STP_EDGE_DEFAULT = (
     "รวมถึง Trunk/Uplink — บน Huawei ควรตั้ง stp edged-port disable ที่พอร์ต Uplink/Trunk (ระบบไม่เติมให้เอง) "
     "โดยเฉพาะเมื่อเปิด stp bpdu-protection กรุณาตรวจสอบ"
 )
+WARN_STP_ROOT_SINGLE_INSTANCE = (
+    "Huawei stp mode rstp ใช้ Spanning Tree เดียว (single instance) สำหรับทุก VLAN จึงไม่มีพารามิเตอร์ vlan — "
+    "stp root มีผลกับทุก VLAN ไม่ใช่เฉพาะ VLAN ที่ต้นทางระบุ (ถ้าใช้ MSTP ให้ตั้ง stp instance <id> root primary แทน) "
+    "กรุณาตรวจสอบ Topology"
+)
+WARN_ETH_TRUNK_MEMBER = (
+    "Huawei: พอร์ตสมาชิกต้องเป็นค่าเริ่มต้นก่อนเข้า Eth-Trunk และค่า L2/L3 (port link-type, VLAN, IP) "
+    "ต้องตั้งที่ interface Eth-Trunk ไม่ใช่ที่พอร์ตสมาชิก — กรุณาตรวจสอบคำสั่งอื่นในพอร์ตนี้"
+)
+WARN_VOICE_VLAN_HYBRID = (
+    "Huawei: ถ้าพอร์ตใช้ทั้ง access VLAN และ voice VLAN ต้องเปลี่ยนเป็น port link-type hybrid พร้อม "
+    "port hybrid tagged vlan <voice_vid> และ port hybrid untagged vlan <access_vid> — ระบบไม่แปลงเป็น hybrid ให้เอง "
+    "กรุณาตั้งค่าเองบนอุปกรณ์ปลายทาง"
+)
+WARN_HSRP_TO_VRRP = (
+    "HSRP เป็นโปรโตคอลเฉพาะของ Cisco — Huawei ใช้ VRRP แทน อุปกรณ์ทุกตัวในกลุ่มต้องใช้ VRRP เหมือนกัน "
+    "และ VRRP ทำ preempt เป็นค่าเริ่มต้น (HSRP ไม่ทำ) กรุณาตรวจสอบ"
+)
+WARN_VRRP_NO_VIRTUAL_IP = (
+    "ต้นทางไม่มี virtual IP ที่แปลงได้สำหรับกลุ่มนี้ — Huawei ต้องสร้าง vrrp vrid <id> virtual-ip <ip> "
+    "ก่อนคำสั่ง vrrp อื่นของกลุ่ม กรุณาตรวจสอบ"
+)
+WARN_TRACK_OBJECT_ASSIGNED = (
+    "Cisco ต้องใช้ track object — ระบบกำหนดหมายเลข track ให้เอง (Huawei ไม่มีหมายเลขนี้) "
+    "หมายเลขนี้อาจชนกับ track ที่มีอยู่แล้วบนอุปกรณ์ปลายทาง กรุณาตรวจสอบก่อนใช้งาน"
+)
+WARN_CISCO_VRRP = (
+    "IOS-XE บางรุ่นใช้ VRRPv3 (fhrp version vrrp v3 และ vrrp <id> address-family ipv4) แทนรูปแบบนี้ "
+    "กรุณาตรวจสอบกับรุ่นของอุปกรณ์ปลายทาง"
+)
 
 # Banner delimiters that are safe on each target (never the target's comment marker).
 _BANNER_DELIMITERS = {

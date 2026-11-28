@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from app.core.ir import AclRefIR, DeviceConfigIR, InterfaceIR, Provenance, RenderedLine, SyntaxCategory, Vendor
+from app.core.ir import AclRefIR, DeviceConfigIR, InterfaceIR, InterfaceRef, Provenance, RenderedLine, SyntaxCategory, Vendor
 from app.core.renderers.common import (
     WARN_WRITE_MEMORY,
     WARN_STP_EDGE_DEFAULT,
     WARN_STP_RSTP,
+    WARN_CISCO_VRRP,
+    WARN_TRACK_OBJECT_ASSIGNED,
     interface_header,
     WARN_ACL_NUMBER_ASSIGNED,
     WARN_CISCO_SSH,
@@ -57,12 +59,74 @@ def _render_acls(w: LineWriter, ir: DeviceConfigIR) -> None:
         w.separator()
 
 
-def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> None:
+def _trunk_is_lacp(ir: DeviceConfigIR, group: int) -> bool:
+    return any(i.if_type == "eth-trunk" and i.number == str(group) and i.lacp_static for i in ir.interfaces)
+
+
+def _track_objects(ir: DeviceConfigIR) -> dict[tuple[str, str], tuple[int, bool]]:
+    """Tracked interface -> (track object number, assigned by the system?).
+
+    Cisco HSRP/VRRP tracks a global `track <obj> interface <if> line-protocol` object. A number
+    from the Cisco source is reused; otherwise (Huawei source) the system assigns the lowest free one.
+    """
+    out: dict[tuple[str, str], tuple[int, bool]] = {}
+    tracks = [t for i in ir.interfaces for g in i.vrrp_groups for t in g.tracks]
+    for t in tracks:
+        if t.track_object is not None:
+            out.setdefault((t.interface.if_type, t.interface.number), (t.track_object, False))
+    used = {n for n, _ in out.values()}
+    next_free = 1
+    for t in tracks:
+        key = (t.interface.if_type, t.interface.number)
+        if key in out:
+            continue
+        while next_free in used:
+            next_free += 1
+        out[key] = (next_free, True)
+        used.add(next_free)
+    return out
+
+
+def _render_track_objects(w: LineWriter, ir: DeviceConfigIR) -> dict[tuple[str, str], tuple[int, bool]]:
+    objects = _track_objects(ir)
+    sources = {(t.interface.if_type, t.interface.number): t.source_line
+               for i in ir.interfaces for g in i.vrrp_groups for t in g.tracks}
+    for (if_type, number), (obj, assigned) in sorted(objects.items(), key=lambda kv: kv[1][0]):
+        name = display_name(InterfaceRef(if_type=if_type, number=number), C)
+        if assigned:
+            w.cmd(f"track {obj} interface {name} line-protocol", S, sources[(if_type, number)],
+                  WARN_TRACK_OBJECT_ASSIGNED, SYSTEM)
+        else:
+            w.cmd(f"track {obj} interface {name} line-protocol", S, sources[(if_type, number)])
+    if objects:
+        w.separator()
+    return objects
+
+
+def _render_fhrp(w: LineWriter, iface: InterfaceIR, objects: dict[tuple[str, str], tuple[int, bool]]) -> None:
+    for g in iface.vrrp_groups:
+        word = "standby" if g.protocol == "hsrp" else "vrrp"
+        lines: list[tuple[str, object]] = []
+        if g.virtual_ip is not None:
+            lines.append((f" {word} {g.vrid} ip {g.virtual_ip}", g.field_lines.get("virtual_ip")))
+        if g.priority is not None:
+            lines.append((f" {word} {g.vrid} priority {g.priority}", g.field_lines.get("priority")))
+        for t in g.tracks:
+            obj = objects[(t.interface.if_type, t.interface.number)][0]
+            lines.append((f" {word} {g.vrid} track {obj} decrement {t.decrement}", t.source_line))
+        for i, (text, src) in enumerate(lines):
+            w.cmd(text, T, src, WARN_CISCO_VRRP if word == "vrrp" and i == 0 else None)
+
+
+def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR, objects=None) -> None:
     name = display_name(iface.ref, C)
     fl = iface.field_lines
     w.cmd(interface_header(iface, C), D, iface.source_lines[0], interface_warnings(iface, name))
     if iface.description:
         w.cmd(f" description {iface.description}", D, fl.get("description"))
+    if iface.channel_group is not None:
+        mode = "active" if _trunk_is_lacp(ir, iface.channel_group) else "on"
+        w.cmd(f" channel-group {iface.channel_group} mode {mode}", S, fl.get("channel_group"))
     if iface.link_protocol:
         warn = hdlc_warning(name) if iface.link_protocol == "hdlc" else None
         w.cmd(f" encapsulation {iface.link_protocol}", D, fl.get("link_protocol"), warn)
@@ -70,11 +134,14 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
         w.cmd(f" switchport mode {iface.port_mode}", D, fl.get("port_mode"), trunk_warning(iface, name))
     if iface.access_vlan is not None:
         w.cmd(f" switchport access vlan {iface.access_vlan}", D, fl.get("access_vlan"))
+    if iface.voice_vlan is not None:
+        w.cmd(f" switchport voice vlan {iface.voice_vlan}", D, fl.get("voice_vlan"))
     if iface.trunk_allowed_vlans:
         vlans = format_cisco_vlan_list(iface.trunk_allowed_vlans)
         w.cmd(f" switchport trunk allowed vlan {vlans}", T, fl.get("trunk_allowed_vlans"))
     if iface.ipv4:
         w.cmd(f" ip address {iface.ipv4.ip} {iface.ipv4.netmask}", D, fl.get("ipv4"))
+    _render_fhrp(w, iface, objects or {})
     for attr, direction in (("acl_in", "in"), ("acl_out", "out")):
         ref = getattr(iface, attr)
         if ref is not None:
@@ -98,6 +165,9 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
         w.cmd(" switchport port-security mac-address sticky", D, fl.get("port_security_sticky"))
     if iface.dhcp_snooping_trusted:
         w.cmd(" ip dhcp snooping trust", D, fl.get("dhcp_snooping_trusted"))
+    for storm in iface.storm_control:
+        level = f"{storm.max_percent}" if storm.min_percent == storm.max_percent else f"{storm.max_percent} {storm.min_percent}"
+        w.cmd(f" storm-control {storm.traffic} level {level}", T, storm.source_line)
     if iface.shutdown is not None:
         w.cmd(" shutdown" if iface.shutdown else " no shutdown", D, fl.get("shutdown"))
     w.notes(iface.notes)
@@ -112,6 +182,10 @@ def _render_ospf(w: LineWriter, ir: DeviceConfigIR) -> None:
     w.cmd(f"router ospf {ospf.process_id}", S, src)
     if ospf.router_id:
         w.cmd(f" router-id {ospf.router_id}", S, fl.get("router_id"))
+    if ospf.silent_all:
+        w.cmd(" passive-interface default", S, fl.get("silent_all"))
+    for ref in ospf.non_silent_interfaces:
+        w.cmd(f" no passive-interface {display_name(ref, C)}", S, fl.get(f"non_silent {ref.if_type}{ref.number}"))
     for ref in ospf.silent_interfaces:
         w.cmd(f" passive-interface {display_name(ref, C)}", S, src)
     for area in ospf.areas:
@@ -225,6 +299,9 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd("spanning-tree mode rapid-pvst", T, ir.field_lines.get("stp_mode"), WARN_STP_RSTP)
     if ir.stp_edge_default:
         w.cmd("spanning-tree portfast default", D, ir.field_lines.get("stp_edge_default"), WARN_STP_EDGE_DEFAULT)
+    if ir.stp_root and ir.stp_root_vlans:
+        vlans = format_cisco_vlan_list(ir.stp_root_vlans)
+        w.cmd(f"spanning-tree vlan {vlans} root {ir.stp_root}", T, ir.field_lines.get("stp_root"))
     for banner in ir.banners:
         render_banner(w, banner)
     w.separator()
@@ -253,8 +330,9 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
 
     _render_acls(w, ir)
 
+    objects = _render_track_objects(w, ir)  # global track objects before the HSRP/VRRP lines using them
     for iface in ir.interfaces:
-        _render_interface(w, ir, iface)
+        _render_interface(w, ir, iface, objects)
 
     if ir.ospf:
         _render_ospf(w, ir)
@@ -282,7 +360,9 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"ntp server {server.address}", D, server.source_line)
     for host in ir.syslog_hosts:
         w.cmd(f"logging host {host.address}", D, host.source_line)
-    if ir.ntp_servers or ir.syslog_hosts:
+    if ir.syslog_source:
+        w.cmd(f"logging source-interface {display_name(ir.syslog_source, C)}", D, ir.field_lines.get("syslog_source"))
+    if ir.ntp_servers or ir.syslog_hosts or ir.syslog_source:
         w.separator()
 
     if ir.ssh_server:

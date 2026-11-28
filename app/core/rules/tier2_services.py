@@ -52,6 +52,13 @@ Global BPDU protection (D): spanning-tree portfast [edge] bpduguard default <-> 
 Global STP (system view, with a semantics warning in the renderer):
   spanning-tree mode rapid-pvst     <-> stp mode rstp            (T; other modes -> no rule)
   spanning-tree portfast default    <-> stp edged-port default   (D)
+  spanning-tree vlan <list> root primary|secondary
+                                     -> stp root primary|secondary (T; no VLAN parameter — single RSTP
+                                        instance, renderer warns; Huawei -> Cisco stays "แปลงไม่ได้"
+                                        because Cisco needs a VLAN list the system will not guess)
+
+Syslog source (D): logging source-interface <if> <-> info-center loghost source <if>
+                   (never `info-center source <if>`, which configures log channels)
 """
 
 from __future__ import annotations
@@ -536,6 +543,65 @@ def _stp_edge_default(m, block: Block, ctx: ParseContext) -> None:
     ctx.rule(block.header, D)
 
 
+REASON_STP_ROOT_CONFLICT = reason_intentional(
+    "Huawei stp mode rstp มี Spanning Tree เดียวสำหรับทุก VLAN จึงเป็นได้ทั้ง root primary และ secondary "
+    "พร้อมกันไม่ได้ — กรุณาเลือกบทบาทเดียว (หรือใช้ MSTP: stp instance <id> root primary) แล้วตั้งค่าเอง"
+)
+REASON_STP_ROOT_NO_VLANS = reason_intentional(
+    "Cisco ต้องระบุรายการ VLAN ใน spanning-tree vlan <list> root แต่ stp root ของ Huawei ไม่มี VLAN — "
+    "ระบบไม่เดารายการ VLAN ให้ กรุณาตั้งค่าเอง"
+)
+
+
+def _cisco_stp_root(m, block: Block, ctx: ParseContext) -> None:
+    ids, role = parse_cisco_vlan_list(m[1]), m[2].lower()
+    if ids is None:
+        ctx.unconverted(block.header, REASON_BAD_VALUE, ctx.ir.notes)
+        return
+    if ctx.ir.stp_root is not None and ctx.ir.stp_root != role:
+        ctx.unconverted(block.header, REASON_STP_ROOT_CONFLICT, ctx.ir.notes)
+        return
+    ctx.ir.stp_root = role
+    ctx.ir.stp_root_vlans = sorted({*ctx.ir.stp_root_vlans, *ids})
+    ctx.ir.field_lines.setdefault("stp_root", block.header.no)
+    ctx.rule(block.header, T)
+
+
+def _huawei_stp_root(m, block: Block, ctx: ParseContext) -> None:
+    ctx.unconverted(block.header, REASON_STP_ROOT_NO_VLANS, ctx.ir.notes)
+
+
+cisco_stp_root = _single_line_handler(
+    "cisco_stp_root", r"^spanning-tree\s+vlan\s+([\d,\-\s]+?)\s+root\s+(primary|secondary)$", _cisco_stp_root
+)
+huawei_stp_root = _single_line_handler("huawei_stp_root", r"^stp\s+root\s+(primary|secondary)$", _huawei_stp_root)
+
+
+def _syslog_source(vendor: Vendor):
+    def apply(m, block: Block, ctx: ParseContext) -> None:
+        ref = interface_names.resolve(m[1], vendor)
+        if ref is None:
+            ctx.unconverted(block.header, REASON_UNKNOWN_IF, ctx.ir.notes)
+            return
+        ctx.ir.syslog_source = ref
+        ctx.ir.field_lines["syslog_source"] = block.header.no
+        ctx.rule(block.header, D)
+
+    return apply
+
+
+cisco_syslog_source = _single_line_handler(
+    "cisco_syslog_source",
+    rf"^logging\s+source-interface\s+({interface_names.IF_NAME_PATTERN}|\S+)$",
+    _syslog_source(Vendor.CISCO_IOS_XE),
+)
+huawei_syslog_source = _single_line_handler(
+    "huawei_syslog_source",
+    rf"^info-center\s+loghost\s+source\s+({interface_names.IF_NAME_PATTERN}|\S+)$",
+    _syslog_source(Vendor.HUAWEI_VRP),
+)
+
+
 cisco_stp_mode = _single_line_handler("cisco_stp_mode", r"^spanning-tree\s+mode\s+rapid-pvst$", _stp_mode_rstp)
 huawei_stp_mode = _single_line_handler("huawei_stp_mode", r"^stp\s+mode\s+rstp$", _stp_mode_rstp)
 cisco_stp_edge_default = _single_line_handler(
@@ -637,11 +703,11 @@ CISCO_HANDLERS: list[BlockHandler] = [
     cisco_rip, cisco_default_gateway, cisco_ntp, cisco_syslog, cisco_vty, cisco_console,
     cisco_clock, cisco_ssh_version, cisco_ssh_timeout, cisco_ssh_retries,
     cisco_dhcp_snooping, cisco_dhcp_snooping_vlan, cisco_bpdu_protection,
-    cisco_stp_mode, cisco_stp_edge_default,
+    cisco_stp_mode, cisco_stp_edge_default, cisco_stp_root, cisco_syslog_source,
 ]
 HUAWEI_HANDLERS: list[BlockHandler] = [
     huawei_rip, huawei_ntp, huawei_syslog, huawei_vty, huawei_console, huawei_stelnet, huawei_telnet,
     huawei_clock, huawei_ssh_version, huawei_ssh_timeout, huawei_ssh_retries,
     huawei_dhcp_service, huawei_dhcp_snooping, huawei_bpdu_protection,
-    huawei_stp_mode, huawei_stp_edge_default,
+    huawei_stp_mode, huawei_stp_edge_default, huawei_stp_root, huawei_syslog_source,
 ]

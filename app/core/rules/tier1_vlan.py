@@ -24,6 +24,12 @@
                                               (global Cisco `spanning-tree portfast bpduguard default`
                                               <-> `stp bpdu-protection`, see tier2_services)
   (Huawei, inside `vlan <id>`) dhcp snooping enable -> Cisco ip dhcp snooping vlan <list> (S)
+  storm-control broadcast|multicast|unicast level <max> [<min>]
+                                          <-> storm-control <type> min-rate percent <min> max-rate percent <max> (T)
+                                              (ALWAYS `percent`: bare numbers are pps on Huawei VRP;
+                                              whole percentages 1–100 only, never rounded)
+  switchport voice vlan <id>              <-> voice-vlan <id> enable             (D; renderer warns that
+                                              access + voice needs a Huawei hybrid port)
 
 Intentionally unconverted (§2.3.2 item 7): `vlan 10,20` followed by `name X`,
 `port trunk allow-pass vlan all`, `port link-type hybrid`.
@@ -34,7 +40,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from app.core.ir import DhcpSnoopingIR, InterfaceIR, SyntaxCategory, VlanIR
+from app.core.ir import DhcpSnoopingIR, InterfaceIR, StormControlIR, SyntaxCategory, VlanIR
 from app.core.rules.base import (
     CISCO_EXIT_RULES,
     HUAWEI_EXIT_RULES,
@@ -71,6 +77,10 @@ REASON_BPDUGUARD_INTERFACE = (
     "(ป้องกันทุกพอร์ตที่ตั้ง stp edged-port enable) จึงไม่ใส่ไว้ใน interface/port-group — "
     "หากต้องการให้ตั้ง stp bpdu-protection ที่ system-view "
     "(ต้นทาง Cisco: spanning-tree portfast bpduguard default ระบบแปลงให้อัตโนมัติ)"
+)
+REASON_STORM_FRACTION = reason_intentional(
+    "Huawei รับค่า storm-control แบบเปอร์เซ็นต์เป็นจำนวนเต็มเท่านั้น ระบบไม่ปัดเศษค่าให้ "
+    "กรุณาระบุเป็นจำนวนเต็ม (1–100) แล้วแปลงใหม่"
 )
 MAX_PORT_SECURITY_MACS = 4096
 _PORT_SECURITY_ACTION = {"protect": "protect", "restrict": "restrict", "shutdown": "shutdown", "error-down": "shutdown"}
@@ -318,6 +328,56 @@ def _unconverted(reason: str):
     return fn
 
 
+def _voice_vlan(m, line, ctx, iface):
+    ids = _valid([int(m[1])])
+    if ids is None:
+        ctx.unconverted(line, REASON_BAD_VLAN, iface.notes)
+        return
+    _set(iface, "voice_vlan", ids[0], line)
+    ctx.rule(line, D)
+
+
+_PERCENT = re.compile(r"(\d{1,3})(?:\.(\d+))?")
+
+
+def _percent(text: str) -> tuple[Optional[int], bool]:
+    """'10' / '10.00' -> (10, False); '10.5' -> (None, True) (fraction); out of 1–100 -> (None, False)."""
+    m = _PERCENT.fullmatch(text)
+    if not m:
+        return None, False
+    if m[2] and int(m[2]) != 0:
+        return None, True
+    value = int(m[1])
+    return (value if 1 <= value <= 100 else None), False
+
+
+def _store_storm(iface: InterfaceIR, traffic: str, high: int, low: int, line: Line, ctx: ParseContext) -> None:
+    iface.storm_control = [s for s in iface.storm_control if s.traffic != traffic]
+    iface.storm_control.append(StormControlIR(traffic=traffic, max_percent=high, min_percent=low, source_line=line.no))
+    ctx.rule(line, T)
+
+
+def _cisco_storm(m, line, ctx, iface):
+    high, high_fraction = _percent(m[2])
+    low, low_fraction = _percent(m[3]) if m[3] else (high, high_fraction)
+    if high_fraction or low_fraction:
+        ctx.unconverted(line, REASON_STORM_FRACTION, iface.notes)
+        return
+    if high is None or low is None or low > high:
+        ctx.unconverted(line, REASON_BAD_VALUE, iface.notes)
+        return
+    _store_storm(iface, m[1].lower(), high, low, line, ctx)
+
+
+def _huawei_storm(m, line, ctx, iface):
+    low, _ = _percent(m[2])
+    high, _ = _percent(m[3])
+    if high is None or low is None or low > high:
+        ctx.unconverted(line, REASON_BAD_VALUE, iface.notes)
+        return
+    _store_storm(iface, m[1].lower(), high, low, line, ctx)
+
+
 CISCO_SWITCHPORT_RULES = compile_rules(
     [
         (r"^switchport\s+mode\s+(access|trunk)$", _mode),
@@ -334,6 +394,9 @@ CISCO_SWITCHPORT_RULES = compile_rules(
         (r"^switchport\s+port-security\s+violation\s+(protect|restrict|shutdown)$", _port_security_action),
         (r"^switchport\s+port-security\s+mac-address\s+sticky$", _flag("port_security_sticky")),
         (r"^ip\s+dhcp\s+snooping\s+trust$", _flag("dhcp_snooping_trusted")),
+        (r"^switchport\s+voice\s+vlan\s+(\d+)$", _voice_vlan),
+        (r"^storm-control\s+(broadcast|multicast|unicast)\s+level\s+(\d+(?:\.\d+)?)(?:\s+(\d+(?:\.\d+)?))?$",
+         _cisco_storm),
     ]
 )
 
@@ -350,6 +413,9 @@ HUAWEI_SWITCHPORT_RULES = compile_rules(
         (r"^port-security\s+protect-action\s+(protect|restrict|error-down)$", _port_security_action),
         (r"^port-security\s+mac-address\s+sticky$", _flag("port_security_sticky")),
         (r"^dhcp\s+snooping\s+trusted$", _flag("dhcp_snooping_trusted")),
+        (r"^voice-vlan\s+(\d+)\s+enable$", _voice_vlan),
+        (r"^storm-control\s+(broadcast|multicast|unicast)\s+min-rate\s+percent\s+(\d+)\s+max-rate\s+percent\s+(\d+)$",
+         _huawei_storm),
     ]
 )
 

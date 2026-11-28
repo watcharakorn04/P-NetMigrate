@@ -90,6 +90,44 @@ class InterfaceRef(BaseModel):
     number: str
 
 
+class StormControlIR(BaseModel):
+    """Storm suppression in percent of port bandwidth.
+
+    Cisco `storm-control broadcast level <max> [<min>]` <-> Huawei
+    `storm-control broadcast min-rate percent <min> max-rate percent <max>` (always `percent`:
+    bare numbers are pps on Huawei VRP). Cisco omits <min> when it equals <max>.
+    """
+
+    traffic: str  # "broadcast" | "multicast" | "unicast"
+    max_percent: int
+    min_percent: int
+    source_line: Optional[int] = None
+
+
+class VrrpTrackIR(BaseModel):
+    """Track an interface's line protocol and lower the group priority when it goes down.
+
+    Cisco `standby <g> track <if> <dec>` / `standby <g> track <obj> decrement <dec>` (+ global
+    `track <obj> interface <if> line-protocol`) <-> Huawei `vrrp vrid <g> track interface <if> reduced <dec>`.
+    """
+
+    interface: InterfaceRef
+    decrement: int
+    track_object: Optional[int] = None  # Cisco track object number (source detail, not intent)
+    source_line: Optional[int] = None
+
+
+class VrrpGroupIR(BaseModel):
+    """First-hop redundancy group on an interface (Cisco HSRP `standby` / VRRP <-> Huawei VRRP)."""
+
+    vrid: int
+    protocol: str = "vrrp"  # "hsrp" (Cisco standby) | "vrrp"
+    virtual_ip: Optional[IPv4Address] = None
+    priority: Optional[int] = None
+    tracks: list[VrrpTrackIR] = Field(default_factory=list)
+    field_lines: dict[str, int] = Field(default_factory=dict)
+
+
 class InterfaceIR(BaseModel):
     """A single interface. `if_type` is vendor-neutral; numbering is kept verbatim."""
 
@@ -114,6 +152,14 @@ class InterfaceIR(BaseModel):
     port_security_action: Optional[str] = None  # neutral "protect" | "restrict" | "shutdown"
     port_security_sticky: Optional[bool] = None  # mac-address sticky (no MAC values)
     dhcp_snooping_trusted: Optional[bool] = None  # ip dhcp snooping trust <-> dhcp snooping trusted
+    voice_vlan: Optional[int] = None  # switchport voice vlan <id> <-> voice-vlan <id> enable
+    storm_control: list[StormControlIR] = Field(default_factory=list)
+    # Link aggregation. Member: Cisco `channel-group <id> mode active|on` <-> Huawei `eth-trunk <id>`.
+    # Eth-Trunk / Port-channel itself: LACP (Cisco member `mode active`) <-> Huawei `mode lacp-static`;
+    # None = static/manual (Cisco `mode on`, Huawei default `mode manual load-balance`).
+    channel_group: Optional[int] = None
+    lacp_static: Optional[bool] = None
+    vrrp_groups: list[VrrpGroupIR] = Field(default_factory=list)
     # Serial
     link_protocol: Optional[str] = None  # "ppp" | "hdlc" | None (not stated: defaults differ -> warn)
     # Interface-level OSPF
@@ -184,6 +230,10 @@ class OspfIR(BaseModel):
     router_id: Optional[IPv4Address] = None
     areas: list[OspfAreaIR] = Field(default_factory=list)  # kept sorted by area_id
     silent_interfaces: list[InterfaceRef] = Field(default_factory=list)
+    # Cisco `passive-interface default` <-> Huawei `silent-interface all`, with the exceptions
+    # Cisco `no passive-interface <if>` <-> Huawei `undo silent-interface <if>`.
+    silent_all: bool = False
+    non_silent_interfaces: list[InterfaceRef] = Field(default_factory=list)
     default_originate: bool = False
     redistribute: list[RedistributeIR] = Field(default_factory=list)
     source_lines: list[int] = Field(default_factory=list)
@@ -390,7 +440,7 @@ InterfaceIR.model_rebuild()
 # carries the intent.
 _NON_INTENT_FIELDS = {
     "source_vendor", "source_lines", "source_line", "field_lines", "warnings", "notes", "comments",
-    "sequence", "delimiter",
+    "sequence", "delimiter", "track_object",
 }
 
 
@@ -429,6 +479,12 @@ class DeviceConfigIR(BaseModel):
     stp_mode: Optional[str] = None
     # Cisco `spanning-tree portfast default` <-> Huawei `stp edged-port default`.
     stp_edge_default: Optional[bool] = None
+    # Cisco `spanning-tree vlan <list> root primary|secondary` -> Huawei `stp root primary|secondary`
+    # (single RSTP instance, no VLAN parameter). The VLAN list is kept for the Cisco renderer.
+    stp_root: Optional[str] = None  # "primary" | "secondary"
+    stp_root_vlans: list[int] = Field(default_factory=list)
+    # Cisco `logging source-interface <if>` <-> Huawei `info-center loghost source <if>`.
+    syslog_source: Optional[InterfaceRef] = None
     banners: list[BannerIR] = Field(default_factory=list)  # in source order
     field_lines: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

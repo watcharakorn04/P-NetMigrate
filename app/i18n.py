@@ -250,6 +250,43 @@ _EXACT: dict[str, str] = {
     R.WARN_TWO_TUPLE_PORTS: "2-tuple interface numbering (e.g., 0/1) was preserved from the source — if the target "
                             "Huawei device uses 3-tuple port numbering (e.g., S5700, S6700, AR series), adjust to "
                             "0/0/1 before applying.",
+    # enterprise switching / FHRP (EtherChannel, STP root, storm-control, voice VLAN, HSRP->VRRP)
+    T1I.REASON_CHANNEL_PROTOCOL: "Huawei mode lacp-static in interface Eth-Trunk already selects LACP",
+    T1I.REASON_CHANNEL_MODE_CONFLICT: "Members of the same Port-channel use different modes (active and on) — a "
+                                      "Huawei Eth-Trunk has a single mode; check the source",
+    T1I.REASON_CHANNEL_ON_VIRTUAL: "channel-group / eth-trunk can only be used on physical ports",
+    T1I.REASON_LACP_NOT_TRUNK: "mode lacp-static is only valid inside interface Eth-Trunk",
+    T1I.REASON_VRRP_PREEMPT: "Huawei VRRP already preempts by default",
+    T1I.REASON_TRACK_UNUSED: "Intentionally not converted: no converted standby command uses this track object — "
+                             "Huawei has no separate track command (never a system-view bfd track), so it only "
+                             "exists inside vrrp vrid ... track interface",
+    T1I.REASON_TRACK_UNKNOWN: "Intentionally not converted: no interface line-protocol track object matches this "
+                              "reference — the system does not guess what to track",
+    T1V.REASON_STORM_FRACTION: "Intentionally not converted: Huawei accepts only whole storm-control percentages; "
+                               "the system does not round. Use a whole number (1–100) and convert again",
+    T2.REASON_STP_ROOT_CONFLICT: "Intentionally not converted: Huawei stp mode rstp has a single spanning tree for all "
+                                 "VLANs, so it cannot be root primary and secondary at once — pick one role (or use "
+                                 "MSTP: stp instance <id> root primary) and configure it manually",
+    T2.REASON_STP_ROOT_NO_VLANS: "Intentionally not converted: Cisco needs a VLAN list in spanning-tree vlan <list> "
+                                 "root, but Huawei stp root has none — the system does not guess the VLANs; "
+                                 "configure it manually",
+    R.WARN_STP_ROOT_SINGLE_INSTANCE: "Huawei stp mode rstp runs a single spanning-tree instance for all VLANs, so there "
+                                     "is no vlan parameter — stp root applies to every VLAN, not only the VLANs in the "
+                                     "source (with MSTP use stp instance <id> root primary instead); check the topology",
+    R.WARN_ETH_TRUNK_MEMBER: "Huawei: a member port must have default settings before joining an Eth-Trunk, and L2/L3 "
+                             "settings (port link-type, VLANs, IP) belong on interface Eth-Trunk, not on the member — "
+                             "check the other commands on this port",
+    R.WARN_VOICE_VLAN_HYBRID: "Huawei: a port carrying both an access VLAN and a voice VLAN must become port link-type "
+                              "hybrid with port hybrid tagged vlan <voice_vid> and port hybrid untagged vlan "
+                              "<access_vid> — the system does not convert it to hybrid; configure it on the target",
+    R.WARN_HSRP_TO_VRRP: "HSRP is Cisco-proprietary — Huawei uses VRRP instead, so every device in the group must run "
+                         "VRRP, and VRRP preempts by default (HSRP does not); please check",
+    R.WARN_VRRP_NO_VIRTUAL_IP: "No convertible virtual IP for this group — Huawei needs vrrp vrid <id> virtual-ip <ip> "
+                               "before any other vrrp command of the group; please check",
+    R.WARN_TRACK_OBJECT_ASSIGNED: "Cisco needs a track object — the system assigned this track number (Huawei has "
+                                  "none); it may collide with an existing track on the target, check before use",
+    R.WARN_CISCO_VRRP: "Some IOS-XE models use VRRPv3 (fhrp version vrrp v3 and vrrp <id> address-family ipv4) "
+                       "instead of this form; check against the target model",
     # notices
     engine.NOTICE_AI_UNAVAILABLE: "The AI service is unavailable, so the file was converted in rule-only mode. "
                                   "Unconverted lines keep the \"Unconverted\" label and can be sent to AI later",
@@ -294,6 +331,8 @@ _PHRASES: dict[str, str] = {
     "คำสั่งปรับจังหวะเวลา RIP (Timers)": "RIP timers",
     "การนำ ACL ไปใช้กับ Policy อื่น (ACL บน VTY)": "ACL used by other policies (ACL on VTY)",
     "RIPv1 (ระบบรองรับเฉพาะ RIPv2)": "RIPv1 (only RIPv2 is supported)",
+    "EtherChannel แบบ PAgP หรือ LACP passive (รองรับเฉพาะ mode active และ mode on)":
+        "PAgP or LACP passive EtherChannel (only mode active and mode on are supported)",
     "การกรองเส้นทาง BGP (Route Filtering)": "BGP route filtering",
     "Address Family อื่นนอกจาก IPv4 Unicast": "address families other than IPv4 unicast",
     "BGP มากกว่าหนึ่ง AS (ระบบรองรับ AS เดียว)": "BGP with more than one AS (single AS only)",

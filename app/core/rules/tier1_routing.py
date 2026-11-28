@@ -11,6 +11,8 @@ OSPFv2, single process (S — block nesting differs):
    network <ip> <wc> area <a>       <-> area <a> / network <ip> <wc>
    area <a> stub                    <-> area <a> / stub
    passive-interface <if>           <-> silent-interface <if>
+   passive-interface default        <-> silent-interface all
+   no passive-interface <if>        <-> undo silent-interface <if>
    default-information originate    <-> default-route-advertise
   Interface level (D): ip ospf cost / priority / network point-to-point
                    <-> ospf cost / dr-priority / network-type p2p
@@ -192,6 +194,26 @@ def _silent(vendor: Vendor):
     return fn
 
 
+def _silent_all(m, line, ctx, ospf: OspfIR):
+    ospf.silent_all = True
+    ospf.field_lines["silent_all"] = line.no
+    ctx.rule(line, S)
+
+
+def _non_silent(vendor: Vendor):
+    def fn(m, line, ctx, ospf: OspfIR):
+        ref = interface_names.resolve(m[1], vendor)
+        if ref is None:
+            ctx.unconverted(line, REASON_UNKNOWN_IF, ospf.notes)
+            return
+        if ref not in ospf.non_silent_interfaces:
+            ospf.non_silent_interfaces.append(ref)
+            ospf.field_lines[f"non_silent {ref.if_type}{ref.number}"] = line.no
+        ctx.rule(line, S)
+
+    return fn
+
+
 def _default_originate(m, line, ctx, ospf: OspfIR):
     ospf.default_originate = True
     ospf.field_lines["default_originate"] = line.no
@@ -226,7 +248,8 @@ _CISCO_OSPF_RULES = compile_rules(
         (r"^area\s+\S+\s+virtual-link\b", _unsupported("Virtual Link")),
         (r"^area\s+\S+\s+range\b", _unsupported("ABR Summarization")),
         (r"^area\s+\S+\s+authentication\b", _unsupported("การยืนยันตัวตน OSPF (Authentication)")),
-        (r"^passive-interface\s+default$", _no_rule),
+        (r"^passive-interface\s+default$", _silent_all),
+        (rf"^no\s+passive-interface\s+({interface_names.IF_NAME_PATTERN}|\S+)$", _non_silent(Vendor.CISCO_IOS_XE)),
         (rf"^passive-interface\s+({interface_names.IF_NAME_PATTERN}|\S+)$", _silent(Vendor.CISCO_IOS_XE)),
         (r"^default-information\s+originate$", _default_originate),
         (r"^timers\b", _unsupported("คำสั่งปรับจังหวะเวลา OSPF (Timers)")),
@@ -251,7 +274,8 @@ _HUAWEI_OSPF = re.compile(r"^ospf\s+(\d+)(?:\s+router-id\s+(\S+))?$", re.IGNOREC
 _HUAWEI_AREA = re.compile(r"^area\s+(\S+)$", re.IGNORECASE)
 _HUAWEI_OSPF_RULES = compile_rules(
     [
-        (r"^silent-interface\s+all$", _no_rule),
+        (r"^silent-interface\s+all$", _silent_all),
+        (rf"^undo\s+silent-interface\s+({interface_names.IF_NAME_PATTERN}|\S+)$", _non_silent(Vendor.HUAWEI_VRP)),
         (rf"^silent-interface\s+({interface_names.IF_NAME_PATTERN}|\S+)$", _silent(Vendor.HUAWEI_VRP)),
         (r"^default-route-advertise$", _default_originate),
         (r"^(timer|spf-schedule-interval|lsa-arrival-interval|lsa-originate-interval)\b",
