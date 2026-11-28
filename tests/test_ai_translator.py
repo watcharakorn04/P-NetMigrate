@@ -124,6 +124,12 @@ class TestSystemPromptConstraints:
         assert "Return no command for 'logging synchronous'" in prompt
         assert "does not interrupt typed CLI input by default" in prompt
 
+    def test_huawei_stp_mapping_is_strict(self):
+        prompt = _system_prompt(C, H)
+        assert "'spanning-tree portfast' (with or without 'edge') strictly to 'stp edged-port enable'" in prompt
+        assert "'spanning-tree bpduguard enable' strictly to 'stp bpdu-protection'" in prompt
+        assert "never invent non-existent ones such as 'stp sock-type'" in prompt
+
     def test_cisco_target_has_no_huawei_constraints(self):
         prompt = _system_prompt(H, C)
         assert "authentication-mode password" not in prompt
@@ -132,6 +138,8 @@ class TestSystemPromptConstraints:
         assert "port-group group-member" not in prompt
         assert "allow-pass vlan all" not in prompt
         assert "undo idle-timeout" not in prompt
+        assert "stp edged-port enable" not in prompt
+        assert "stp sock-type" not in prompt
 
     @pytest.mark.parametrize("call", ["config", "items"])
     def test_constraints_reach_the_request(self, call):

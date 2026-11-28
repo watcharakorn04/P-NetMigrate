@@ -145,6 +145,11 @@ _TARGET_EXTRA_RULES = {
         "- Never translate 'logging synchronous' into 'undo idle-timeout' (that disables the session "
         "timeout, a completely different meaning). Return no command for 'logging synchronous', because "
         "Huawei VRP does not interrupt typed CLI input by default.\n"
+        "- Translate 'spanning-tree portfast' (with or without 'edge') strictly to "
+        "'stp edged-port enable', and 'spanning-tree bpduguard enable' strictly to 'stp bpdu-protection' "
+        "(BPDU protection on Huawei VRP acts on edge ports, i.e. ports with 'stp edged-port enable'). "
+        "Use only these standard VRP STP commands and never invent non-existent ones such as "
+        "'stp sock-type'.\n"
     ),
     Vendor.CISCO_IOS_XE: "",
 }
