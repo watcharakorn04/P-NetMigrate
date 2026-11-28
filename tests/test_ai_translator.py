@@ -127,7 +127,8 @@ class TestSystemPromptConstraints:
     def test_huawei_stp_mapping_is_strict(self):
         prompt = _system_prompt(C, H)
         assert "'spanning-tree portfast' (with or without 'edge') strictly to 'stp edged-port enable'" in prompt
-        assert "'spanning-tree bpduguard enable' strictly to 'stp bpdu-protection'" in prompt
+        assert "'spanning-tree bpduguard enable' strictly to 'stp bpdu-protection'" not in prompt
+        assert "Emit 'stp bpdu-protection' ONLY at global system-view level" in prompt
         assert "never invent non-existent ones such as 'stp sock-type'" in prompt
 
     def test_cisco_target_has_no_huawei_constraints(self):

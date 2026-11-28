@@ -28,7 +28,7 @@ from app.core.renderers.common import WARN_TWO_TUPLE_PORTS
 from app.core.rules.interface_names import is_virtual
 from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
 from app.core.rules.tier1_system import is_huawei_system_view
-from app.core.secret_stripper import SanitizedResult, contains_secret, strip_secrets
+from app.core.secret_stripper import SanitizedResult, contains_secret, is_interactive_command, strip_secrets
 from app.services import ai_translator as _ai
 from app.services.ai_translator import AIError, AIItem, Translator
 from app.services.mode_selector import resolve_mode
@@ -73,6 +73,12 @@ NOTICE_NO_SELECTION = "ไม่มีบรรทัดที่เลือก
 ADVISORY_AI_SECRET = (
     "บรรทัดที่ AI ตอบกลับมีลักษณะเป็นข้อมูลลับ (รหัสผ่าน/บัญชีผู้ใช้/คีย์) ระบบจึงตัดออก "
     "กรุณาตั้งค่าส่วนนี้เองบนอุปกรณ์ปลายทาง"
+)
+
+ADVISORY_AI_INTERACTIVE = (
+    "ตัดข้อมูลลับออก: บรรทัดที่ AI ตอบกลับเป็นคำสั่งสร้างคีย์แบบโต้ตอบ (rsa local-key-pair create) "
+    "ซึ่งจะถามยืนยัน [Y/N] และขนาดคีย์ ทำให้สคริปต์ค้าง ระบบจึงตัดออกและไม่ส่งไปอุปกรณ์ "
+    "กรุณาสร้างคีย์เองบนอุปกรณ์ปลายทาง"
 )
 
 
@@ -317,6 +323,18 @@ def _ai_lines(answer: list[str], job: _Job, target: Vendor, header: Optional[str
                 continue  # AI repeated the already-converted parent header
             if not text[:1].isspace() and not text.startswith(marker):
                 text = " " + text
+        if is_interactive_command(text):
+            # Interactive key generation hangs scripted pushes (and is key material): never
+            # output it, even when the source line was already stripped before the AI call.
+            out.append(
+                RenderedLine(
+                    text=f"{marker} [{Provenance.SYSTEM.value}] {ADVISORY_AI_INTERACTIVE}",
+                    provenance=Provenance.SYSTEM,
+                    source_line=first,
+                    is_comment=True,
+                )
+            )
+            continue
         if contains_secret(text):
             # Non-Negotiable #2: never output a secret, even one the AI made up.
             out.append(

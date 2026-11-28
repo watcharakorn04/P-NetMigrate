@@ -189,6 +189,14 @@ WARN_WRITE_MEMORY = (
     "— การ Deploy ผ่านระบบบันทึกค่าให้เองอยู่แล้วและไม่ส่งบรรทัดนี้"
 )
 WARN_HUAWEI_VTY_RANGE = "Huawei หลายรุ่นรองรับ VTY 0–4 (บางรุ่นถึง 0–14) กรุณาตรวจสอบช่วง VTY บนอุปกรณ์ปลายทาง"
+ADVISORY_DHCP_ENABLE = "แนะนำ: Huawei ต้องเปิดบริการ DHCP ก่อนเปิด DHCP snooping ด้วยคำสั่ง: dhcp enable"
+WARN_DHCP_ENABLE = (
+    "Huawei ต้องสั่ง dhcp enable ก่อน dhcp snooping enable — ระบบไม่เติมคำสั่งนี้ให้เอง "
+    "(เขียนไว้เป็นคำแนะนำใน Comment) กรุณาตรวจสอบบนอุปกรณ์ปลายทาง"
+)
+WARN_DHCP_SNOOPING_VLAN_UNDECLARED = (
+    "VLAN นี้ไม่ได้ประกาศไว้ในไฟล์ต้นทาง — บน Huawei คำสั่ง vlan <id> จะสร้าง VLAN ขึ้นใหม่ กรุณาตรวจสอบ"
+)
 WARN_TWO_TUPLE_PORTS = (
     "ระบบคงหมายเลขพอร์ต 2 หลักตามต้นฉบับ (เช่น 0/1) — หากอุปกรณ์ปลายทางเป็นสวิตช์หรือเราเตอร์ Huawei "
     "รุ่นที่ใช้พอร์ต 3 หลัก (เช่น S5700, S6700, AR) กรุณาปรับเป็นรูปแบบ 0/0/1 ก่อนนำไปใช้งาน"

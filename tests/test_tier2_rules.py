@@ -360,9 +360,9 @@ class TestVty:
         result = convert(src, vendor, H if vendor is C else C)
         assert_unconverted(result, needle, "ACL")
 
-    def test_console_line_not_claimed(self):
-        result = c2h("line con 0\n logging synchronous\n")
-        assert_unconverted(result, "line con 0")
+    def test_aux_line_not_claimed(self):
+        result = c2h("line aux 0\n logging synchronous\n")
+        assert_unconverted(result, "line aux 0")
 
     def test_user_accounts_never_translated(self):
         result = c2h("username admin privilege 15 secret 9 $9$abcHash\n" + CISCO_VTY)

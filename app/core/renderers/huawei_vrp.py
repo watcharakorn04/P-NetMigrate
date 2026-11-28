@@ -18,6 +18,9 @@ from app.core.renderers.common import (
     WARN_RIP_NO_VERSION,
     WARN_STATIC_DEFAULT_PREFERENCE,
     ADVISORY_STELNET,
+    ADVISORY_DHCP_ENABLE,
+    WARN_DHCP_ENABLE,
+    WARN_DHCP_SNOOPING_VLAN_UNDECLARED,
     WARN_STELNET,
     LineWriter,
     acl_default_action_warning,
@@ -28,6 +31,7 @@ from app.core.renderers.common import (
 )
 from app.core.rules.interface_names import display_name
 from app.core.rules.tier1_vlan import format_huawei_vlan_list
+from app.core.rules.tier2_services import format_huawei_timezone
 from app.core.rules.tier3_bgp_acl import BASIC, format_huawei_rule, huawei_number
 
 D, T, S = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM, SyntaxCategory.STRUCTURAL
@@ -35,6 +39,7 @@ H = Vendor.HUAWEI_VRP
 SYSTEM = Provenance.SYSTEM
 _VALID_ACL_NAME = re.compile(r"^[A-Za-z]\S{0,31}$")
 HUAWEI_VTY_SAFE_MAX = 4
+_HUAWEI_PROTECT_ACTION = {"protect": "protect", "restrict": "restrict", "shutdown": "error-down"}
 
 
 def _first(lines: list[int]):
@@ -84,6 +89,17 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
         w.cmd(f" port trunk allow-pass vlan {vlans}", T, fl.get("trunk_allowed_vlans"))
     if iface.stp_edge:
         w.cmd(" stp edged-port enable", D, fl.get("stp_edge"))
+    if iface.port_security:
+        w.cmd(" port-security enable", D, fl.get("port_security"))
+    if iface.port_security_max is not None:
+        w.cmd(f" port-security max-mac-num {iface.port_security_max}", D, fl.get("port_security_max"))
+    if iface.port_security_action:
+        action = _HUAWEI_PROTECT_ACTION[iface.port_security_action]
+        w.cmd(f" port-security protect-action {action}", T, fl.get("port_security_action"))
+    if iface.port_security_sticky:
+        w.cmd(" port-security mac-address sticky", D, fl.get("port_security_sticky"))
+    if iface.dhcp_snooping_trusted:
+        w.cmd(" dhcp snooping trusted", D, fl.get("dhcp_snooping_trusted"))
     if iface.ipv4:
         w.cmd(f" ip address {iface.ipv4.ip} {iface.ipv4.netmask}", D, fl.get("ipv4"))
     if iface.ospf_network_p2p:
@@ -175,13 +191,52 @@ def _render_bgp(w: LineWriter, ir: DeviceConfigIR) -> None:
     w.separator()
 
 
+def _render_dhcp_snooping(w: LineWriter, ir: DeviceConfigIR) -> None:
+    snooping = ir.dhcp_snooping
+    fl = snooping.field_lines
+    first = fl.get("enabled", fl.get("vlans"))
+    # `dhcp enable` is a prerequisite on Huawei, but the BGP activation block is the only
+    # auto-filled command (§2.3.2 item 5): advice in a comment, never a command.
+    w.advisory(ADVISORY_DHCP_ENABLE, first, WARN_DHCP_ENABLE)
+    if snooping.enabled:
+        w.cmd("dhcp snooping enable", D, fl.get("enabled"))
+    declared = {v.vlan_id for v in ir.vlans}
+    for vid in snooping.vlans:
+        # Per-VLAN view: never the global `dhcp snooping enable vlan ...` form.
+        warn = None if vid in declared else WARN_DHCP_SNOOPING_VLAN_UNDECLARED
+        w.cmd(f"vlan {vid}", S, fl.get("vlans"), warn)
+        w.cmd(" dhcp snooping enable", S, fl.get("vlans"))
+        w.cmd("quit", S, fl.get("vlans"))
+    w.separator()
+
+
+def _render_ssh_server(w: LineWriter, ir: DeviceConfigIR) -> None:
+    ssh, fl = ir.ssh_server, ir.ssh_server.field_lines
+    if ssh.version2_only:
+        w.cmd("ssh server compatible-ssh1x disable", T, fl.get("version2_only"))
+    if ssh.timeout is not None:
+        w.cmd(f"ssh server timeout {ssh.timeout}", D, fl.get("timeout"))
+    if ssh.auth_retries is not None:
+        w.cmd(f"ssh server authentication-retries {ssh.auth_retries}", D, fl.get("auth_retries"))
+    w.separator()
+
+
 def _render_vty(w: LineWriter, ir: DeviceConfigIR) -> None:
-    ssh_lines = [v for v in ir.vty_lines if v.transport and "ssh" in v.transport]
+    for con in (v for v in ir.vty_lines if v.kind == "console"):
+        fl = con.field_lines
+        w.cmd(f"user-interface con {con.first}", D, _first(con.source_lines))
+        if con.login_local:
+            w.cmd(" authentication-mode aaa", D, fl.get("login_local"))
+        w.notes(con.notes)
+        if "exit" in fl:
+            w.exit_view(fl["exit"])
+        w.separator()
+    ssh_lines = [v for v in ir.vty_lines if v.kind == "vty" and v.transport and "ssh" in v.transport]
     if ssh_lines:
         # Proposal §2.3.2 item 5: the BGP activation block is the ONLY auto-filled command.
         # The SSH service switch is therefore advice in a comment, not a generated command.
         w.advisory(ADVISORY_STELNET, ssh_lines[0].field_lines.get("transport"), WARN_STELNET)
-    for vty in ir.vty_lines:
+    for vty in (v for v in ir.vty_lines if v.kind == "vty"):
         fl = vty.field_lines
         last, warn, category = vty.last, None, D
         if vty.first <= HUAWEI_VTY_SAFE_MAX < vty.last:
@@ -213,6 +268,11 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"sysname {ir.hostname}", D, ir.field_lines.get("hostname"))
     if ir.domain_name:
         w.cmd(f"dns domain {ir.domain_name}", D, ir.field_lines.get("domain_name"))
+    if ir.clock_timezone:
+        tz = ir.clock_timezone
+        w.cmd(f"clock timezone {tz.name} {format_huawei_timezone(tz.offset_minutes)}", T, tz.source_line)
+    if ir.stp_bpdu_protection:  # system view only — never inside interface / port-group views
+        w.cmd("stp bpdu-protection", D, ir.field_lines.get("stp_bpdu_protection"))
     w.separator()
 
     for vlan in ir.vlans:
@@ -223,6 +283,9 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         if "exit" in vlan.field_lines:
             w.exit_view(vlan.field_lines["exit"])
         w.separator()
+
+    if ir.dhcp_snooping:
+        _render_dhcp_snooping(w, ir)
 
     _render_acls(w, ir)  # before interfaces: traffic-filter references them
 
@@ -263,6 +326,8 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
     if ir.ntp_servers or ir.syslog_hosts:
         w.separator()
 
+    if ir.ssh_server:
+        _render_ssh_server(w, ir)
     _render_vty(w, ir)
 
     w.top_level_notes(ir.notes)

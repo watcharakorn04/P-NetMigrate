@@ -7,6 +7,20 @@
   switchport trunk allowed vlan 10,30-35  <-> port trunk allow-pass vlan 10 30 to 35  (T)
   spanning-tree portfast [edge]           <-> stp edged-port enable              (D)
   switchport trunk encapsulation dot1q     -> "ไม่ต้องใช้คำสั่งนี้" (Huawei is 802.1Q only)
+  switchport port-security                <-> port-security enable               (D)
+  switchport port-security maximum <n>    <-> port-security max-mac-num <n>      (D; never max-mac-number)
+  switchport port-security violation protect|restrict|shutdown
+                                          <-> port-security protect-action protect|restrict|error-down (T)
+  switchport port-security mac-address sticky <-> port-security mac-address sticky (D)
+  ip dhcp snooping trust                  <-> dhcp snooping trusted              (D)
+  spanning-tree bpduguard enable (interface / interface range)
+                                           -> "ไม่ต้องใช้คำสั่งนี้": on Huawei S-series
+                                              `stp bpdu-protection` is a system-view command that
+                                              protects every `stp edged-port enable` port; it is
+                                              never written inside interface / port-group views
+                                              (global Cisco `spanning-tree portfast bpduguard default`
+                                              <-> `stp bpdu-protection`, see tier2_services)
+  (Huawei, inside `vlan <id>`) dhcp snooping enable -> Cisco ip dhcp snooping vlan <list> (S)
 
 Intentionally unconverted (§2.3.2 item 7): `vlan 10,20` followed by `name X`,
 `port trunk allow-pass vlan all`, `port link-type hybrid`.
@@ -17,10 +31,11 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from app.core.ir import InterfaceIR, SyntaxCategory, VlanIR
+from app.core.ir import DhcpSnoopingIR, InterfaceIR, SyntaxCategory, VlanIR
 from app.core.rules.base import (
     CISCO_EXIT_RULES,
     HUAWEI_EXIT_RULES,
+    REASON_BAD_VALUE,
     REASON_NO_RULE,
     Block,
     BlockHandler,
@@ -44,6 +59,14 @@ REASON_ALLOW_ALL = reason_intentional(
 )
 REASON_HYBRID = reason_intentional("Cisco ไม่มีพอร์ตแบบ hybrid ที่ความหมายตรงกัน")
 REASON_DOT1Q = "Huawei รองรับเฉพาะ 802.1Q อยู่แล้ว จึงไม่ต้องกำหนด encapsulation"
+REASON_BPDUGUARD_INTERFACE = (
+    "Huawei S-series ใช้ stp bpdu-protection เป็นคำสั่งระดับ system-view เท่านั้น "
+    "(ป้องกันทุกพอร์ตที่ตั้ง stp edged-port enable) จึงไม่ใส่ไว้ใน interface/port-group — "
+    "หากต้องการให้ตั้ง stp bpdu-protection ที่ system-view "
+    "(ต้นทาง Cisco: spanning-tree portfast bpduguard default ระบบแปลงให้อัตโนมัติ)"
+)
+MAX_PORT_SECURITY_MACS = 4096
+_PORT_SECURITY_ACTION = {"protect": "protect", "restrict": "restrict", "shutdown": "shutdown", "error-down": "shutdown"}
 
 
 # ----------------------------------------------------------------------------- VLAN list syntax
@@ -142,7 +165,24 @@ _CISCO_VLAN = re.compile(r"^vlan\s+([\d,\-\s]+)$", re.IGNORECASE)
 _CISCO_VLAN_CHILD = compile_rules([(r"^name\s+(.+)$", _set_vlan_name)]) + CISCO_EXIT_RULES
 _HUAWEI_VLAN = re.compile(r"^vlan\s+(\d+)$", re.IGNORECASE)
 _HUAWEI_VLAN_BATCH = re.compile(r"^vlan\s+batch\s+(.+)$", re.IGNORECASE)
-_HUAWEI_VLAN_CHILD = compile_rules([(r"^(description|name)\s+(.+)$", _set_vlan_name)]) + HUAWEI_EXIT_RULES
+
+
+def _vlan_dhcp_snooping(m: re.Match, line: Line, ctx: ParseContext, vlan: VlanIR) -> None:
+    """Huawei per-VLAN `dhcp snooping enable` (inside `vlan <id>`) -> IR DHCP snooping VLAN list."""
+    snooping = ctx.ir.dhcp_snooping or DhcpSnoopingIR()
+    ctx.ir.dhcp_snooping = snooping
+    if vlan.vlan_id not in snooping.vlans:
+        snooping.vlans = sorted({*snooping.vlans, vlan.vlan_id})
+    snooping.field_lines.setdefault("vlans", line.no)
+    ctx.rule(line, SyntaxCategory.STRUCTURAL)
+
+
+_HUAWEI_VLAN_CHILD = compile_rules(
+    [
+        (r"^(description|name)\s+(.+)$", _set_vlan_name),
+        (r"^dhcp\s+snooping\s+enable$", _vlan_dhcp_snooping),
+    ]
+) + HUAWEI_EXIT_RULES
 
 
 def cisco_vlan(block: Block, ctx: ParseContext) -> bool:
@@ -234,6 +274,32 @@ def _not_needed_dot1q(m, line, ctx, iface):
     ctx.not_needed(line, REASON_DOT1Q, iface.notes)
 
 
+def _not_needed_bpduguard(m, line, ctx, iface):
+    ctx.not_needed(line, REASON_BPDUGUARD_INTERFACE, iface.notes)
+
+
+def _flag(attr: str):
+    def fn(m, line, ctx, iface):
+        _set(iface, attr, True, line)
+        ctx.rule(line, D)
+
+    return fn
+
+
+def _port_security_max(m, line, ctx, iface):
+    value = int(m[1])
+    if not 1 <= value <= MAX_PORT_SECURITY_MACS:
+        ctx.unconverted(line, REASON_BAD_VALUE, iface.notes)
+        return
+    _set(iface, "port_security_max", value, line)
+    ctx.rule(line, D)
+
+
+def _port_security_action(m, line, ctx, iface):
+    _set(iface, "port_security_action", _PORT_SECURITY_ACTION[m[1].lower()], line)
+    ctx.rule(line, T)
+
+
 def _unconverted(reason: str):
     def fn(m, line, ctx, iface):
         ctx.unconverted(line, reason, iface.notes)
@@ -250,6 +316,12 @@ CISCO_SWITCHPORT_RULES = compile_rules(
          _unconverted(reason_not_supported("รายการ VLAN แบบ all/none/add/remove/except"))),
         (r"^switchport\s+trunk\s+encapsulation\s+dot1q$", _not_needed_dot1q),
         (r"^spanning-tree\s+portfast(\s+edge)?$", _stp_edge),
+        (r"^spanning-tree\s+bpduguard\s+enable$", _not_needed_bpduguard),
+        (r"^switchport\s+port-security$", _flag("port_security")),
+        (r"^switchport\s+port-security\s+maximum\s+(\d+)$", _port_security_max),
+        (r"^switchport\s+port-security\s+violation\s+(protect|restrict|shutdown)$", _port_security_action),
+        (r"^switchport\s+port-security\s+mac-address\s+sticky$", _flag("port_security_sticky")),
+        (r"^ip\s+dhcp\s+snooping\s+trust$", _flag("dhcp_snooping_trusted")),
     ]
 )
 
@@ -261,6 +333,11 @@ HUAWEI_SWITCHPORT_RULES = compile_rules(
         (r"^port\s+trunk\s+allow-pass\s+vlan\s+all$", _unconverted(REASON_ALLOW_ALL)),
         (r"^port\s+trunk\s+allow-pass\s+vlan\s+((?:\d+|to|\s)+)$", _trunk_list(parse_huawei_vlan_list, True)),
         (r"^stp\s+edged-port\s+enable$", _stp_edge),
+        (r"^port-security\s+enable$", _flag("port_security")),
+        (r"^port-security\s+max-mac-num\s+(\d+)$", _port_security_max),
+        (r"^port-security\s+protect-action\s+(protect|restrict|error-down)$", _port_security_action),
+        (r"^port-security\s+mac-address\s+sticky$", _flag("port_security_sticky")),
+        (r"^dhcp\s+snooping\s+trusted$", _flag("dhcp_snooping_trusted")),
     ]
 )
 

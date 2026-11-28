@@ -197,6 +197,11 @@ _EXACT: dict[str, str] = {
     T2.REASON_STELNET: "Cisco has no separate SSH service switch — SSH runs once an RSA key exists "
                        "(crypto key generate rsa), which must be created on the target device",
     T2.REASON_TELNET_SERVER: "Cisco already serves Telnet on VTY lines; it is controlled by transport input",
+    T2.REASON_DHCP_SERVICE: "Cisco runs the DHCP service (service dhcp) by default",
+    T1V.REASON_BPDUGUARD_INTERFACE: "On Huawei S-series stp bpdu-protection is a system-view command only (it protects "
+                                    "every port with stp edged-port enable), so it is never written inside an "
+                                    "interface/port-group — if needed, configure stp bpdu-protection in system-view "
+                                    "(Cisco spanning-tree portfast bpduguard default is converted to it automatically)",
     T3.REASON_BGP_SYNC: "BGP synchronization is already disabled by default on the target",
     T3.REASON_BGP_AUTO_SUMMARY: "Huawei already disables BGP auto-summary by default",
     T3.REASON_ACL_REMARK: "ACL remarks have no direct equivalent, kept as a comment (no filtering effect)",
@@ -221,7 +226,15 @@ _EXACT: dict[str, str] = {
                     "SSH users on the target device (user accounts are never converted)",
     R.WARN_CISCO_SSH: "Cisco needs ip domain name and an RSA key (crypto key generate rsa) before SSH works. "
                       "The system creates no keys and converts no user accounts; configure them on the target device",
-    R.WARN_HUAWEI_VTY_RANGE: "Many Huawei models support VTY 0–4 (some up to 0–14); check the VTY range on the target",
+    R.WARN_DHCP_ENABLE: "Huawei needs dhcp enable before dhcp snooping enable — the system does not add it "
+                        "(it is written as a comment advisory); check on the target device",
+    R.WARN_DHCP_SNOOPING_VLAN_UNDECLARED: "This VLAN is not declared in the source file — on Huawei, vlan <id> creates "
+                                          "the VLAN; please check",
+    engine.ADVISORY_AI_INTERACTIVE: "Secret stripped: the AI answered with an interactive key-generation command "
+                                    "(rsa local-key-pair create) that prompts [Y/N] and a key size and hangs "
+                                    "scripts, so it was removed and is never deployed. Create the key on the "
+                                    "target device yourself",
+    R.WARN_HUAWEI_VTY_RANGE:"Many Huawei models support VTY 0–4 (some up to 0–14); check the VTY range on the target",
     R.WARN_TWO_TUPLE_PORTS: "2-tuple interface numbering (e.g., 0/1) was preserved from the source — if the target "
                             "Huawei device uses 3-tuple port numbering (e.g., S5700, S6700, AR series), adjust to "
                             "0/0/1 before applying.",

@@ -7,7 +7,8 @@ Before ANY push (4.5) these are removed, in every mode, on every path:
   * comment lines (`!` / `#`), including every "แปลงไม่ได้" / "ไม่ต้องใช้คำสั่งนี้" comment;
   * lines labelled "มาจาก AI ต้องตรวจสอบก่อนใช้" or "แปลงไม่ได้" — the label follows the text, so an
     AI line pasted back verbatim into the edited command list is still removed;
-  * credential / user-account lines (`strip_secrets` + `contains_secret`).
+  * credential / user-account lines (`strip_secrets` + `contains_secret`);
+  * interactive commands that would hang the push (`rsa local-key-pair create`, ...).
 If AI-labelled lines were present, deployment is blocked until the user explicitly ticks the
 review acknowledgement (they were removed and must be reviewed/configured by hand).
 
@@ -27,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
 from app.core.ir import Provenance, Vendor
-from app.core.secret_stripper import contains_secret, strip_secrets
+from app.core.secret_stripper import contains_secret, is_interactive_command, strip_secrets
 from app.db import Database, utcnow
 
 try:  # optional at import time so the app still serves without the SSH stack
@@ -53,6 +54,7 @@ R_UNCONVERTED = "unconverted"
 R_SECRET = "credential"
 R_TERMINATOR = "terminator"
 R_NOT_NEEDED = "not_needed"
+R_INTERACTIVE = "interactive"
 _BLOCKED_LABELS = {Provenance.AI.name, Provenance.UNCONVERTED.name}
 
 
@@ -109,6 +111,9 @@ def build_plan(lines: Iterable[dict], vendor: Vendor) -> DeployPlan:
             continue
         if no in stripped or contains_secret(text):
             removed.append({"line": no, "text": "", "reason": R_SECRET})  # never echo the credential
+            continue
+        if is_interactive_command(text):
+            removed.append({"line": no, "text": text, "reason": R_INTERACTIVE})
             continue
         if prov == Provenance.AI.name:
             if not (line.get("is_comment") or _is_comment(text, vendor)):

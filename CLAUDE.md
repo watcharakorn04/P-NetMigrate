@@ -8,7 +8,7 @@ If anything here conflicts with that file, the proposal wins. Do not expand scop
 Network Configuration Conversion System for Multi-Vendor Migration.
 Bidirectional translation **Cisco IOS-XE ⇄ Huawei VRP**, **IPv4 only**. No other vendor pair.
 
-**Status: feature-complete.** Milestones 1–5 are done and **739 `pytest` tests pass**.
+**Status: feature-complete.** Milestones 1–5 are done and **825 `pytest` tests pass**.
 
 | Milestone | Delivered |
 |---|---|
@@ -58,8 +58,8 @@ raw text ─► strip_secrets ─► Parser (per vendor) ─► IR (vendor-agnos
 
 | Tier | File(s) | Coverage |
 |---|---|---|
-| 1 | `tier1_system.py`, `tier1_vlan.py`, `tier1_interface.py`, `tier1_routing.py`, `interface_names.py` | hostname/domain/NTP target/syslog target/file assembly (`configure terminal`⇄`system-view` rendered first, `end`⇄`return`, `write memory`/`copy run start`⇄`save force` after it, `no ip domain-lookup`, bare `enable`, `service password-encryption` and `logging synchronous` (anywhere, incl. inside `line con`/`line vty`) → not needed); view exits `exit`⇄`quit` (one per nested Huawei view); VLAN & port (access/trunk/STP edge); interfaces incl. `interface range`⇄`port-group group-member` (numbers verbatim); static routes; OSPFv2 |
-| 2 | `tier2_services.py` | RIP, redistribute, default route, NTP, syslog, VTY/SSH (no user-account commands) |
+| 1 | `tier1_system.py`, `tier1_vlan.py`, `tier1_interface.py`, `tier1_routing.py`, `interface_names.py` | hostname/domain/NTP target/syslog target/file assembly (`configure terminal`⇄`system-view` rendered first, `end`⇄`return`, `write memory`/`copy run start`⇄`save force` after it, `no ip domain-lookup`, bare `enable`, `service password-encryption` and `logging synchronous` (anywhere, incl. inside `line con`/`line vty`) → not needed); view exits `exit`⇄`quit` (one per nested Huawei view); VLAN & port (access/trunk/STP edge; port-security `maximum <n>`⇄`max-mac-num <n>`, violation⇄`protect-action`, sticky; `ip dhcp snooping trust`⇄`dhcp snooping trusted`; interface-level `spanning-tree bpduguard enable` → not needed because Huawei `stp bpdu-protection` is system-view only); interfaces incl. `interface range`⇄`port-group group-member` (numbers verbatim); static routes; OSPFv2 |
+| 2 | `tier2_services.py` | RIP, redistribute, default route, NTP, syslog, VTY/console (`login local`⇄`authentication-mode aaa`, `line con 0`⇄`user-interface con 0`), SSH server (`ip ssh version 2`⇄`ssh server compatible-ssh1x disable`, `time-out`⇄`ssh server timeout`, `authentication-retries`⇄`ssh server authentication-retries`), `clock timezone ICT 7 0`⇄`clock timezone ICT add 07:00:00`, DHCP snooping (`ip dhcp snooping vlan 10,20` → per-VLAN `vlan <id>`/` dhcp snooping enable`/`quit`, never `dhcp snooping enable vlan …`; `dhcp enable` only as a comment advisory), global `spanning-tree portfast bpduguard default`⇄`stp bpdu-protection` (no user-account commands) |
 | 3 | `tier3_bgp_acl.py` | BGP, ACL, with behavioural tests (silent-failure risk) |
 
 ## 3. Pre-scan + 3 conversion modes
@@ -128,7 +128,9 @@ Route-Map/Route-Policy, VRF, Tunnel & ATM interfaces, and every "not supported" 
    `rule_only`, and topology descriptions. `ai_translator.py` re-applies the filter (defence in
    depth). **Output sanitization:** every AI answer line is checked with `contains_secret()` and
    dropped, replaced by the `ADVISORY_AI_SECRET` advisory. Never rely on prompt instructions to hide
-   secrets.
+   secrets. **Interactive commands** (`rsa local-key-pair create`, `crypto key generate`, …;
+   `secret_stripper.is_interactive_command`) in AI answers are replaced by the SYSTEM comment
+   `ADVISORY_AI_INTERACTIVE` ("ตัดข้อมูลลับออก …") because they prompt `[Y/N]` and hang scripted pushes.
 3. **Never output secrets.** Passwords, hashes and keys never appear in converted files, neither as
    commands nor **inside `!` or `#` comments**. Emit a manual-configuration advisory instead, telling
    the admin to reconfigure on the target device.
@@ -139,7 +141,7 @@ Route-Map/Route-Policy, VRF, Tunnel & ATM interfaces, and every "not supported" 
      `return`, `save force`, `write memory`, …) are not pushed: Netmiko enters/leaves config mode
      itself and saves with `save_config()`.
    - Also strip credential/user lines (`strip_secrets` + `contains_secret`). Removed credentials
-     are reported without their text.
+     are reported without their text. Interactive commands are stripped too (reason `interactive`).
    - Deployment always shows the full command list and requires explicit user confirmation.
    - **Simulation (dry-run) is the default** and contacts nothing. Real mode needs a device from the
      inventory that the user confirms is a self-built **EVE-NG** lab node.
@@ -269,7 +271,7 @@ tests/
   test_tier3_rules.py  test_ai_hybrid.py  test_batch.py  test_deploy.py  test_history.py
   test_inventory_hardware.py  test_topology_settings.py  test_web_ui.py  test_ui_samples.py
   test_ai_translator.py  test_huawei_accuracy.py  test_hybrid_verification.py
-  test_two_tuple_ports.py
+  test_two_tuple_ports.py  test_medium_verification.py
 ```
 
 Static URLs carry `?v={{ asset_v }}`. Bump `web.ASSET_VERSION` on any UI/JS change.

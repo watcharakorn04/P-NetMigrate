@@ -108,6 +108,12 @@ class InterfaceIR(BaseModel):
     access_vlan: Optional[int] = None
     trunk_allowed_vlans: Optional[list[int]] = None  # None = not stated; explicit ids only (no "all")
     stp_edge: Optional[bool] = None
+    # Port security (Cisco `switchport port-security ...` <-> Huawei `port-security ...`)
+    port_security: Optional[bool] = None  # enable switch
+    port_security_max: Optional[int] = None  # maximum <n> <-> max-mac-num <n>
+    port_security_action: Optional[str] = None  # neutral "protect" | "restrict" | "shutdown"
+    port_security_sticky: Optional[bool] = None  # mac-address sticky (no MAC values)
+    dhcp_snooping_trusted: Optional[bool] = None  # ip dhcp snooping trust <-> dhcp snooping trusted
     # Serial
     link_protocol: Optional[str] = None  # "ppp" | "hdlc" | None (not stated: defaults differ -> warn)
     # Interface-level OSPF
@@ -322,8 +328,9 @@ class ServerIR(BaseModel):
 
 
 class VtyIR(BaseModel):
-    """Remote-management lines. User accounts / passwords are never part of the IR."""
+    """Remote-management / console lines. User accounts / passwords are never part of the IR."""
 
+    kind: str = "vty"  # "vty" (line vty <-> user-interface vty) | "console" (line con <-> user-interface con)
     first: int
     last: int
     transport: Optional[list[str]] = None  # sorted subset of ["ssh", "telnet"]; None = not stated
@@ -331,6 +338,35 @@ class VtyIR(BaseModel):
     source_lines: list[int] = Field(default_factory=list)
     field_lines: dict[str, int] = Field(default_factory=dict)
     notes: list[NoteIR] = Field(default_factory=list)
+
+
+class ClockTimezoneIR(BaseModel):
+    """`clock timezone ICT 7 0` <-> `clock timezone ICT add 07:00:00` (offset east of UTC)."""
+
+    name: str
+    offset_minutes: int  # signed: +420 = UTC+7, -300 = UTC-5
+    source_line: Optional[int] = None
+
+
+class SshServerIR(BaseModel):
+    """Global SSH server settings. Never auto-enables the SSH service (`stelnet server enable`)."""
+
+    version2_only: Optional[bool] = None  # ip ssh version 2 <-> ssh server compatible-ssh1x disable
+    timeout: Optional[int] = None  # ip ssh time-out <s> <-> ssh server timeout <s>
+    auth_retries: Optional[int] = None  # ip ssh authentication-retries <n> <-> ssh server authentication-retries <n>
+    field_lines: dict[str, int] = Field(default_factory=dict)
+
+
+class DhcpSnoopingIR(BaseModel):
+    """DHCP snooping: global switch + per-VLAN enable.
+
+    Cisco `ip dhcp snooping` / `ip dhcp snooping vlan 10,20` <-> Huawei `dhcp snooping enable`
+    (system view) / `vlan 10` + ` dhcp snooping enable` + `quit` per VLAN.
+    """
+
+    enabled: Optional[bool] = None  # global switch stated
+    vlans: list[int] = Field(default_factory=list)  # sorted
+    field_lines: dict[str, int] = Field(default_factory=dict)
 
 
 InterfaceIR.model_rebuild()
@@ -370,6 +406,12 @@ class DeviceConfigIR(BaseModel):
     ntp_servers: list[ServerIR] = Field(default_factory=list)
     syslog_hosts: list[ServerIR] = Field(default_factory=list)
     vty_lines: list[VtyIR] = Field(default_factory=list)
+    clock_timezone: Optional[ClockTimezoneIR] = None
+    ssh_server: Optional[SshServerIR] = None
+    dhcp_snooping: Optional[DhcpSnoopingIR] = None
+    # Global BPDU protection for edge ports: Cisco `spanning-tree portfast bpduguard default`
+    # <-> Huawei `stp bpdu-protection` (system view only on Huawei S-series).
+    stp_bpdu_protection: Optional[bool] = None
     field_lines: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     # Free-text source comments (comment-prefix translation only; not config intent).

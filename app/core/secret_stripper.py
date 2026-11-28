@@ -99,6 +99,24 @@ def contains_secret(line: str) -> bool:
     return _classify(line) is not None
 
 
+# Interactive commands: they prompt ([Y/N], key modulus size, ...) and hang a scripted CLI
+# push. Key generation is also secret material the admin must create on the device. They are
+# never emitted, never deployed; an AI answer containing one is replaced by an advisory.
+_INTERACTIVE = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"^(rsa|dsa|ecc|sm2)\s+local-key-pair\s+create\b",  # Huawei VRP key generation
+        r"^crypto\s+key\s+generate\b",  # Cisco IOS-XE key generation
+    )
+]
+
+
+def is_interactive_command(line: str) -> bool:
+    """True for commands that prompt interactively (e.g. `rsa local-key-pair create`)."""
+    body = line.strip()
+    return bool(body) and not body.startswith(("!", "#")) and any(p.match(body) for p in _INTERACTIVE)
+
+
 def _advisory(marker: str, line_no: int, category: str) -> str:
     return (
         f"{marker} [{Provenance.SYSTEM.value}] บรรทัด {line_no}: ตัดข้อมูลลับออก ({category}) "

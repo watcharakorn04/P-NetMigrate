@@ -29,6 +29,25 @@ VTY / SSH (D):
   activation block is the only command the system may auto-generate (proposal §2.3.2 item 5).
   User accounts / passwords are never translated — secret_stripper removes them first; a
   password-based `login` / `authentication-mode password` stays "แปลงไม่ได้".
+  line con 0                    <-> user-interface con 0   (same child rules as VTY)
+   login local                  <-> authentication-mode aaa   (never `authentication-mode local`)
+
+SSH server (D/T, global; never adds `stelnet server enable`):
+  ip ssh version 2                  <-> ssh server compatible-ssh1x disable
+  ip ssh time-out <s>               <-> ssh server timeout <s>                 (never `ssh client timeout`)
+  ip ssh authentication-retries <n> <-> ssh server authentication-retries <n>  (never `ssh server retry`)
+
+Clock (T): clock timezone <tz> <h> [<m>] <-> clock timezone <tz> add|minus HH:MM:SS
+           e.g. `clock timezone ICT 7 0` <-> `clock timezone ICT add 07:00:00`
+
+DHCP snooping (D global / S per VLAN):
+  ip dhcp snooping              <-> dhcp snooping enable   (+ comment advisory: `dhcp enable` first)
+  ip dhcp snooping vlan 10,20   <-> vlan 10 / dhcp snooping enable / quit   (one block per VLAN;
+                                    never the global `dhcp snooping enable vlan ...`)
+  (Huawei) dhcp enable           -> "ไม่ต้องใช้คำสั่งนี้" (Cisco runs the DHCP service by default)
+
+Global BPDU protection (D): spanning-tree portfast [edge] bpduguard default <-> stp bpdu-protection
+  (interface-level `spanning-tree bpduguard enable` is "ไม่ต้องใช้คำสั่งนี้", see tier1_vlan)
 """
 
 from __future__ import annotations
@@ -36,9 +55,22 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from app.core.ir import BgpIR, OspfIR, RedistributeIR, RipIR, ServerIR, SyntaxCategory, Vendor, VtyIR
+from app.core.ir import (
+    BgpIR,
+    ClockTimezoneIR,
+    DhcpSnoopingIR,
+    OspfIR,
+    RedistributeIR,
+    RipIR,
+    ServerIR,
+    SshServerIR,
+    SyntaxCategory,
+    Vendor,
+    VtyIR,
+)
 from app.core.rules import interface_names
 from app.core.rules.tier1_system import CISCO_NOT_NEEDED_ANYWHERE
+from app.core.rules.tier1_vlan import parse_cisco_vlan_list
 from app.core.rules.base import (
     CISCO_EXIT_RULES,
     HUAWEI_EXIT_RULES,
@@ -60,7 +92,7 @@ from app.core.rules.base import (
     unsupported_rule,
 )
 
-D, T = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM
+D, T, S = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM, SyntaxCategory.STRUCTURAL
 
 REASON_REDIST_NO_METRIC = reason_intentional(
     "ต้นทางไม่ได้ระบุค่าตัววัด (metric) — ค่าเริ่มต้นตอนดึงเส้นทางจากโปรโตคอลอื่นของสองยี่ห้อไม่เท่ากัน "
@@ -80,6 +112,7 @@ REASON_STELNET = (
     "ซึ่งต้องสร้างเองบนอุปกรณ์ปลายทาง"
 )
 REASON_TELNET_SERVER = "Cisco เปิดบริการ Telnet บน VTY อยู่แล้ว ควบคุมด้วย transport input"
+REASON_DHCP_SERVICE = "Cisco เปิดบริการ DHCP (service dhcp) เป็นค่าเริ่มต้นอยู่แล้ว"
 
 FEATURE_RIP_AUTH = "การยืนยันตัวตน RIP (Authentication)"
 FEATURE_RIP_TIMERS = "คำสั่งปรับจังหวะเวลา RIP (Timers)"
@@ -328,6 +361,162 @@ cisco_syslog = _single_line_handler(
 huawei_syslog = _single_line_handler("huawei_syslog", r"^info-center\s+loghost\s+(\S+)$", _server("syslog_hosts"))
 
 
+# ----------------------------------------------------------------------------- clock timezone
+
+MAX_TZ_MINUTES = 23 * 60 + 59
+
+
+def _store_timezone(ctx: ParseContext, block: Block, name: str, minutes: int) -> None:
+    if abs(minutes) > MAX_TZ_MINUTES:
+        ctx.unconverted(block.header, REASON_BAD_VALUE, ctx.ir.notes)
+        return
+    ctx.ir.clock_timezone = ClockTimezoneIR(name=name, offset_minutes=minutes, source_line=block.header.no)
+    ctx.rule(block.header, T)
+
+
+def _cisco_timezone(m, block: Block, ctx: ParseContext) -> None:
+    hours, minutes = int(m[2]), int(m[3] or 0)
+    if minutes > 59:
+        ctx.unconverted(block.header, REASON_BAD_VALUE, ctx.ir.notes)
+        return
+    sign = -1 if m[2].startswith("-") else 1
+    _store_timezone(ctx, block, m[1], sign * (abs(hours) * 60 + minutes))
+
+
+def _huawei_timezone(m, block: Block, ctx: ParseContext) -> None:
+    hours, minutes, seconds = int(m[3]), int(m[4]), int(m[5] or 0)
+    if minutes > 59 or seconds != 0:  # Cisco offsets have no seconds
+        ctx.unconverted(block.header, REASON_BAD_VALUE, ctx.ir.notes)
+        return
+    sign = -1 if m[2].lower() == "minus" else 1
+    _store_timezone(ctx, block, m[1], sign * (hours * 60 + minutes))
+
+
+cisco_clock = _single_line_handler(
+    "cisco_clock", r"^clock\s+timezone\s+(\S+)\s+([+-]?\d{1,2})(?:\s+(\d{1,2}))?$", _cisco_timezone
+)
+huawei_clock = _single_line_handler(
+    "huawei_clock", r"^clock\s+timezone\s+(\S+)\s+(add|minus)\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$", _huawei_timezone
+)
+
+
+def format_huawei_timezone(offset_minutes: int) -> str:
+    """+420 -> 'add 07:00:00'; -330 -> 'minus 05:30:00'."""
+    sign = "minus" if offset_minutes < 0 else "add"
+    hours, minutes = divmod(abs(offset_minutes), 60)
+    return f"{sign} {hours:02d}:{minutes:02d}:00"
+
+
+def format_cisco_timezone(offset_minutes: int) -> str:
+    """+420 -> '7 0'; -330 -> '-5 30'."""
+    hours, minutes = divmod(abs(offset_minutes), 60)
+    return f"{'-' if offset_minutes < 0 else ''}{hours} {minutes}"
+
+
+# ----------------------------------------------------------------------------- SSH server
+
+MAX_SSH_TIMEOUT = 120
+MAX_SSH_RETRIES = 5
+
+
+def _ssh(ctx: ParseContext) -> SshServerIR:
+    if ctx.ir.ssh_server is None:
+        ctx.ir.ssh_server = SshServerIR()
+    return ctx.ir.ssh_server
+
+
+def _ssh_version2(m, block: Block, ctx: ParseContext) -> None:
+    ssh = _ssh(ctx)
+    ssh.version2_only = True
+    ssh.field_lines["version2_only"] = block.header.no
+    ctx.rule(block.header, T)
+
+
+def _ssh_number(attr: str, high: int):
+    def apply(m, block: Block, ctx: ParseContext) -> None:
+        value = int(m[1])
+        if not 1 <= value <= high:
+            ctx.unconverted(block.header, REASON_BAD_VALUE, ctx.ir.notes)
+            return
+        ssh = _ssh(ctx)
+        setattr(ssh, attr, value)
+        ssh.field_lines[attr] = block.header.no
+        ctx.rule(block.header, D)
+
+    return apply
+
+
+cisco_ssh_version = _single_line_handler("cisco_ssh_version", r"^ip\s+ssh\s+version\s+2$", _ssh_version2)
+cisco_ssh_timeout = _single_line_handler(
+    "cisco_ssh_timeout", r"^ip\s+ssh\s+time-out\s+(\d+)$", _ssh_number("timeout", MAX_SSH_TIMEOUT)
+)
+cisco_ssh_retries = _single_line_handler(
+    "cisco_ssh_retries", r"^ip\s+ssh\s+authentication-retries\s+(\d+)$", _ssh_number("auth_retries", MAX_SSH_RETRIES)
+)
+huawei_ssh_version = _single_line_handler(
+    "huawei_ssh_version",
+    r"^(?:ssh\s+server\s+compatible-ssh1x\s+disable|undo\s+ssh\s+server\s+compatible-ssh1x(?:\s+enable)?)$",
+    _ssh_version2,
+)
+huawei_ssh_timeout = _single_line_handler(
+    "huawei_ssh_timeout", r"^ssh\s+server\s+timeout\s+(\d+)$", _ssh_number("timeout", MAX_SSH_TIMEOUT)
+)
+huawei_ssh_retries = _single_line_handler(
+    "huawei_ssh_retries",
+    r"^ssh\s+server\s+authentication-retries\s+(\d+)$",
+    _ssh_number("auth_retries", MAX_SSH_RETRIES),
+)
+
+
+# ----------------------------------------------------------------------------- DHCP snooping
+
+
+def _snooping(ctx: ParseContext) -> DhcpSnoopingIR:
+    if ctx.ir.dhcp_snooping is None:
+        ctx.ir.dhcp_snooping = DhcpSnoopingIR()
+    return ctx.ir.dhcp_snooping
+
+
+def _snooping_global(m, block: Block, ctx: ParseContext) -> None:
+    snooping = _snooping(ctx)
+    snooping.enabled = True
+    snooping.field_lines["enabled"] = block.header.no
+    ctx.rule(block.header, D)
+
+
+def _cisco_snooping_vlans(m, block: Block, ctx: ParseContext) -> None:
+    ids = parse_cisco_vlan_list(m[1])
+    if ids is None:
+        ctx.unconverted(block.header, REASON_BAD_VALUE, ctx.ir.notes)
+        return
+    snooping = _snooping(ctx)
+    snooping.vlans = sorted({*snooping.vlans, *ids})
+    snooping.field_lines.setdefault("vlans", block.header.no)
+    ctx.rule(block.header, S)
+
+
+cisco_dhcp_snooping = _single_line_handler("cisco_dhcp_snooping", r"^ip\s+dhcp\s+snooping$", _snooping_global)
+cisco_dhcp_snooping_vlan = _single_line_handler(
+    "cisco_dhcp_snooping_vlan", r"^ip\s+dhcp\s+snooping\s+vlan\s+([\d,\-\s]+)$", _cisco_snooping_vlans
+)
+huawei_dhcp_snooping = _single_line_handler("huawei_dhcp_snooping", r"^dhcp\s+snooping\s+enable$", _snooping_global)
+
+
+# ----------------------------------------------------------------------------- global STP BPDU protection
+
+
+def _bpdu_protection(m, block: Block, ctx: ParseContext) -> None:
+    ctx.ir.stp_bpdu_protection = True
+    ctx.ir.field_lines["stp_bpdu_protection"] = block.header.no
+    ctx.rule(block.header, D)
+
+
+cisco_bpdu_protection = _single_line_handler(
+    "cisco_bpdu_protection", r"^spanning-tree\s+portfast\s+(?:edge\s+)?bpduguard\s+default$", _bpdu_protection
+)
+huawei_bpdu_protection = _single_line_handler("huawei_bpdu_protection", r"^stp\s+bpdu-protection$", _bpdu_protection)
+
+
 # ----------------------------------------------------------------------------- VTY / SSH
 
 _TRANSPORT_WORDS = {"ssh": {"ssh"}, "telnet": {"telnet"}, "all": {"ssh", "telnet"}}
@@ -369,7 +558,7 @@ _HUAWEI_VTY_RULES = compile_rules(
 ) + HUAWEI_EXIT_RULES
 
 
-def _vty_handler(vendor: Vendor, header_re: str, rules: list[ChildRule]) -> BlockHandler:
+def _vty_handler(vendor: Vendor, header_re: str, rules: list[ChildRule], kind: str = "vty") -> BlockHandler:
     header = re.compile(header_re, re.IGNORECASE)
 
     def handler(block: Block, ctx: ParseContext) -> bool:
@@ -377,22 +566,28 @@ def _vty_handler(vendor: Vendor, header_re: str, rules: list[ChildRule]) -> Bloc
         if not m:
             return False
         first = int(m[1])
-        last = int(m[2]) if m[2] is not None else first
+        last = int(m[2]) if m[2] else first
         if last < first:
             ctx.unconverted_block(block, REASON_BAD_VALUE, ctx.ir.notes)
             return True
-        vty = VtyIR(first=first, last=last, source_lines=[block.header.no])
+        vty = VtyIR(kind=kind, first=first, last=last, source_lines=[block.header.no])
         ctx.ir.vty_lines.append(vty)
         ctx.rule(block.header, D)
         apply_child_rules(block, ctx, rules, vty, vty.notes)
         return True
 
-    handler.__name__ = f"{'cisco' if vendor is Vendor.CISCO_IOS_XE else 'huawei'}_vty"
+    handler.__name__ = f"{'cisco' if vendor is Vendor.CISCO_IOS_XE else 'huawei'}_{kind}"
     return handler
 
 
 cisco_vty = _vty_handler(Vendor.CISCO_IOS_XE, r"^line\s+vty\s+(\d+)(?:\s+(\d+))?$", _CISCO_VTY_RULES)
 huawei_vty = _vty_handler(Vendor.HUAWEI_VRP, r"^user-interface\s+vty\s+(\d+)(?:\s+(\d+))?$", _HUAWEI_VTY_RULES)
+cisco_console = _vty_handler(
+    Vendor.CISCO_IOS_XE, r"^line\s+con(?:sole)?\s+(0)()$", _CISCO_VTY_RULES, kind="console"
+)
+huawei_console = _vty_handler(
+    Vendor.HUAWEI_VRP, r"^user-interface\s+con(?:sole)?\s+(0)()$", _HUAWEI_VTY_RULES, kind="console"
+)
 
 
 def _huawei_service_switch(name: str, pattern: str, reason: str) -> BlockHandler:
@@ -406,7 +601,16 @@ def _huawei_service_switch(name: str, pattern: str, reason: str) -> BlockHandler
 
 huawei_stelnet = _huawei_service_switch("huawei_stelnet", r"^stelnet\s+server\s+enable$", REASON_STELNET)
 huawei_telnet = _huawei_service_switch("huawei_telnet", r"^telnet\s+server\s+enable$", REASON_TELNET_SERVER)
+huawei_dhcp_service = _huawei_service_switch("huawei_dhcp_service", r"^dhcp\s+enable$", REASON_DHCP_SERVICE)
 
 # Handlers for the RIP block before the generic single-line ones (no pattern overlap today).
-CISCO_HANDLERS: list[BlockHandler] = [cisco_rip, cisco_default_gateway, cisco_ntp, cisco_syslog, cisco_vty]
-HUAWEI_HANDLERS: list[BlockHandler] = [huawei_rip, huawei_ntp, huawei_syslog, huawei_vty, huawei_stelnet, huawei_telnet]
+CISCO_HANDLERS: list[BlockHandler] = [
+    cisco_rip, cisco_default_gateway, cisco_ntp, cisco_syslog, cisco_vty, cisco_console,
+    cisco_clock, cisco_ssh_version, cisco_ssh_timeout, cisco_ssh_retries,
+    cisco_dhcp_snooping, cisco_dhcp_snooping_vlan, cisco_bpdu_protection,
+]
+HUAWEI_HANDLERS: list[BlockHandler] = [
+    huawei_rip, huawei_ntp, huawei_syslog, huawei_vty, huawei_console, huawei_stelnet, huawei_telnet,
+    huawei_clock, huawei_ssh_version, huawei_ssh_timeout, huawei_ssh_retries,
+    huawei_dhcp_service, huawei_dhcp_snooping, huawei_bpdu_protection,
+]

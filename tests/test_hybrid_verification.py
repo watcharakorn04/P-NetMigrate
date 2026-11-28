@@ -4,7 +4,7 @@
    (AI-only) translation, and partial AI answers (hybrid / user-selected) merged into a
    rule result that already enters system view / closes with `return` are stripped of them.
 2. `logging synchronous` -> "ไม่ต้องใช้คำสั่งนี้" (VRP does not interrupt typed CLI input),
-   at top level, inside `line vty` and inside unclaimed blocks such as `line con 0`.
+   at top level, inside `line vty` and inside unclaimed blocks such as `line aux 0` (`line con 0` is claimed by the console rule).
 3. Bare `enable` and `service password-encryption` -> "ไม่ต้องใช้คำสั่งนี้".
 
 None of these lines may ever be sent to AI in hybrid mode.
@@ -135,10 +135,10 @@ class TestLoggingSynchronousNotNeeded:
         assert not result.unconverted_items
         assert parse_config("line vty 0 4\n login local\n logging synchronous\n", C).blocks[0].complete
 
-    def test_inside_unclaimed_console_block(self):
-        result = c2h("line con 0\n logging synchronous\n")
+    def test_inside_unclaimed_aux_block(self):
+        result = c2h("line aux 0\n logging synchronous\n")
         self._assert_not_needed(result)
-        assert [i.command.strip() for i in result.unconverted_items] == ["line con 0"]
+        assert [i.command.strip() for i in result.unconverted_items] == ["line aux 0"]
 
     def test_with_arguments(self):
         self._assert_not_needed(c2h("line vty 0 4\n logging synchronous level all\n"), "logging synchronous level all")
@@ -149,13 +149,13 @@ class TestLoggingSynchronousNotNeeded:
         assert not result.unconverted_items
 
     def test_never_mapped_to_idle_timeout(self):
-        assert "idle-timeout" not in c2h("line con 0\n logging synchronous\n").text
+        assert "idle-timeout" not in c2h("line aux 0\n logging synchronous\n").text
 
     def test_hybrid_never_sends_it_to_ai(self):
-        fake = FakeAI(["user-interface console 0"])
-        src = "line con 0\n logging synchronous\nline vty 0 4\n login local\n logging synchronous\n"
+        fake = FakeAI(["user-interface aux 0"])
+        src = "line aux 0\n logging synchronous\nline vty 0 4\n login local\n logging synchronous\n"
         result = convert(src, C, H, HYBRID, translator=fake)
-        assert fake.sent == ["line con 0"]
+        assert fake.sent == ["line aux 0"]
         assert result.ai_sent_line_numbers == [1]
         self._assert_not_needed(result)
 

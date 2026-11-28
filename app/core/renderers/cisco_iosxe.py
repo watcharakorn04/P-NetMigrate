@@ -20,6 +20,7 @@ from app.core.renderers.common import (
 )
 from app.core.rules.interface_names import display_name
 from app.core.rules.tier1_vlan import format_cisco_vlan_list
+from app.core.rules.tier2_services import format_cisco_timezone
 from app.core.rules.tier3_bgp_acl import BASIC, cisco_number, format_cisco_entry
 
 D, T, S = SyntaxCategory.DIRECT, SyntaxCategory.TRANSFORM, SyntaxCategory.STRUCTURAL
@@ -84,6 +85,16 @@ def _render_interface(w: LineWriter, ir: DeviceConfigIR, iface: InterfaceIR) -> 
         w.cmd(f" ip ospf priority {iface.ospf_priority}", D, fl.get("ospf_priority"))
     if iface.stp_edge:
         w.cmd(" spanning-tree portfast", D, fl.get("stp_edge"))
+    if iface.port_security:
+        w.cmd(" switchport port-security", D, fl.get("port_security"))
+    if iface.port_security_max is not None:
+        w.cmd(f" switchport port-security maximum {iface.port_security_max}", D, fl.get("port_security_max"))
+    if iface.port_security_action:
+        w.cmd(f" switchport port-security violation {iface.port_security_action}", T, fl.get("port_security_action"))
+    if iface.port_security_sticky:
+        w.cmd(" switchport port-security mac-address sticky", D, fl.get("port_security_sticky"))
+    if iface.dhcp_snooping_trusted:
+        w.cmd(" ip dhcp snooping trust", D, fl.get("dhcp_snooping_trusted"))
     if iface.shutdown is not None:
         w.cmd(" shutdown" if iface.shutdown else " no shutdown", D, fl.get("shutdown"))
     w.notes(iface.notes)
@@ -171,9 +182,13 @@ def _render_bgp(w: LineWriter, ir: DeviceConfigIR) -> None:
 
 
 def _render_vty(w: LineWriter, ir: DeviceConfigIR) -> None:
-    for vty in ir.vty_lines:
+    # Console first (Cisco order), then VTY.
+    for vty in sorted(ir.vty_lines, key=lambda v: v.kind != "console"):
         fl = vty.field_lines
-        header = f"line vty {vty.first} {vty.last}" if vty.last != vty.first else f"line vty {vty.first}"
+        if vty.kind == "console":
+            header = f"line con {vty.first}"
+        else:
+            header = f"line vty {vty.first} {vty.last}" if vty.last != vty.first else f"line vty {vty.first}"
         w.cmd(header, D, _first(vty.source_lines))
         if vty.login_local:
             w.cmd(" login local", D, fl.get("login_local"))
@@ -198,6 +213,11 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.cmd(f"hostname {ir.hostname}", D, ir.field_lines.get("hostname"))
     if ir.domain_name:
         w.cmd(f"ip domain name {ir.domain_name}", D, ir.field_lines.get("domain_name"))
+    if ir.clock_timezone:
+        tz = ir.clock_timezone
+        w.cmd(f"clock timezone {tz.name} {format_cisco_timezone(tz.offset_minutes)}", T, tz.source_line)
+    if ir.stp_bpdu_protection:
+        w.cmd("spanning-tree portfast bpduguard default", D, ir.field_lines.get("stp_bpdu_protection"))
     w.separator()
 
     for vlan in ir.vlans:
@@ -212,6 +232,14 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
         w.notes(vlan.notes)
         if "exit" in vlan.field_lines:
             w.exit_view(vlan.field_lines["exit"])
+        w.separator()
+
+    if ir.dhcp_snooping:
+        snooping = ir.dhcp_snooping
+        if snooping.enabled:
+            w.cmd("ip dhcp snooping", D, snooping.field_lines.get("enabled"))
+        if snooping.vlans:
+            w.cmd(f"ip dhcp snooping vlan {format_cisco_vlan_list(snooping.vlans)}", S, snooping.field_lines.get("vlans"))
         w.separator()
 
     _render_acls(w, ir)
@@ -248,6 +276,15 @@ def render(ir: DeviceConfigIR) -> list[RenderedLine]:
     if ir.ntp_servers or ir.syslog_hosts:
         w.separator()
 
+    if ir.ssh_server:
+        ssh, fl = ir.ssh_server, ir.ssh_server.field_lines
+        if ssh.version2_only:
+            w.cmd("ip ssh version 2", T, fl.get("version2_only"))
+        if ssh.timeout is not None:
+            w.cmd(f"ip ssh time-out {ssh.timeout}", D, fl.get("timeout"))
+        if ssh.auth_retries is not None:
+            w.cmd(f"ip ssh authentication-retries {ssh.auth_retries}", D, fl.get("auth_retries"))
+        w.separator()
     _render_vty(w, ir)
 
     w.top_level_notes(ir.notes)

@@ -107,6 +107,7 @@ UI_PAGES: dict[str, dict[str, str]] = {
     "dep_reason_unconverted": {"th": "แปลงไม่ได้", "en": "Unconverted"},
     "dep_reason_credential": {"th": "รหัสผ่าน/บัญชีผู้ใช้", "en": "Credential / user"},
     "dep_reason_not_needed": {"th": "ไม่ต้องใช้คำสั่งนี้", "en": "Not needed"},
+    "dep_reason_interactive": {"th": "คำสั่งแบบโต้ตอบ (ถาม Y/N) ซึ่งจะทำให้การส่งค้าง", "en": "Interactive command (prompts Y/N) that would hang the push"},
     "dep_reason_terminator": {"th": "คำสั่งเข้า/ออกโหมดหรือบันทึก (ระบบจัดการเอง)", "en": "Mode/save command (handled automatically)"},
     "dep_secret_hidden": {"th": "(ซ่อนข้อมูลลับ)", "en": "(secret hidden)"},
     "dep_ack_ai": {
