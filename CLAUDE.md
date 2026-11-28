@@ -8,7 +8,7 @@ If anything here conflicts with that file, the proposal wins. Do not expand scop
 Network Configuration Conversion System for Multi-Vendor Migration.
 Bidirectional translation **Cisco IOS-XE ⇄ Huawei VRP**, **IPv4 only**. No other vendor pair.
 
-**Status: feature-complete.** Milestones 1–5 are done and **729 `pytest` tests pass**.
+**Status: feature-complete.** Milestones 1–5 are done and **738 `pytest` tests pass**.
 
 | Milestone | Delivered |
 |---|---|
@@ -269,6 +269,7 @@ tests/
   test_tier3_rules.py  test_ai_hybrid.py  test_batch.py  test_deploy.py  test_history.py
   test_inventory_hardware.py  test_topology_settings.py  test_web_ui.py  test_ui_samples.py
   test_ai_translator.py  test_huawei_accuracy.py  test_hybrid_verification.py
+  test_two_tuple_ports.py
 ```
 
 Static URLs carry `?v={{ asset_v }}`. Bump `web.ASSET_VERSION` on any UI/JS change.

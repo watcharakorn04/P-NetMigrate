@@ -222,6 +222,9 @@ _EXACT: dict[str, str] = {
     R.WARN_CISCO_SSH: "Cisco needs ip domain name and an RSA key (crypto key generate rsa) before SSH works. "
                       "The system creates no keys and converts no user accounts; configure them on the target device",
     R.WARN_HUAWEI_VTY_RANGE: "Many Huawei models support VTY 0–4 (some up to 0–14); check the VTY range on the target",
+    R.WARN_TWO_TUPLE_PORTS: "2-tuple interface numbering (e.g., 0/1) was preserved from the source — if the target "
+                            "Huawei device uses 3-tuple port numbering (e.g., S5700, S6700, AR series), adjust to "
+                            "0/0/1 before applying.",
     # notices
     engine.NOTICE_AI_UNAVAILABLE: "The AI service is unavailable, so the file was converted in rule-only mode. "
                                   "Unconverted lines keep the \"Unconverted\" label and can be sent to AI later",

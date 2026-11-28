@@ -24,6 +24,8 @@ from pydantic import BaseModel
 from app.core.ir import ConversionMode, DeviceConfigIR, Provenance, RenderedLine, Vendor
 from app.core.parsers import ParseResult, parse_config
 from app.core.renderers import render_config
+from app.core.renderers.common import WARN_TWO_TUPLE_PORTS
+from app.core.rules.interface_names import is_virtual
 from app.core.rules.base import BlockResult, LineKind, LineStatus, auto_ai_eligible
 from app.core.rules.tier1_system import is_huawei_system_view
 from app.core.secret_stripper import SanitizedResult, contains_secret, strip_secrets
@@ -151,6 +153,23 @@ def _collect_warnings(lines: Iterable[RenderedLine]) -> list[str]:
     return warnings
 
 
+def _is_two_tuple(number: Optional[str]) -> bool:
+    """"0/1" (or sub-interface "0/1.100") is 2-tuple <slot>/<port>; "0/0/1" is 3-tuple."""
+    if not number:
+        return False
+    parts = number.split(".", 1)[0].split("/")
+    return len(parts) == 2 and all(p.isdigit() for p in parts)
+
+
+def _has_two_tuple_ports(ir: DeviceConfigIR) -> bool:
+    """True when a physical interface rendered from the IR keeps 2-tuple numbering."""
+    return any(
+        not (iface.is_virtual or is_virtual(iface.if_type))
+        and (_is_two_tuple(iface.number) or _is_two_tuple(iface.range_end))
+        for iface in ir.interfaces
+    )
+
+
 def _rule_result(
     raw: str,
     source_vendor: Vendor,
@@ -186,6 +205,15 @@ def _rule_result(
         notices=list(notices or []),
         secret_stripped_count=len(sanitized.stripped_line_numbers),
     )
+    # Port numbers are never translated (§6); a single, deduplicated advisory per conversion
+    # flags 2-tuple names that 3-tuple Huawei models (S5700/S6700/AR) will not accept.
+    if (
+        source_vendor is Vendor.CISCO_IOS_XE
+        and target_vendor is Vendor.HUAWEI_VRP
+        and _has_two_tuple_ports(parsed.ir)
+        and WARN_TWO_TUPLE_PORTS not in result.warnings
+    ):
+        result.warnings.append(WARN_TWO_TUPLE_PORTS)
     return result, parsed, sanitized
 
 
